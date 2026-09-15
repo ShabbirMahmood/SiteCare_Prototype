@@ -1,0 +1,24 @@
+SITECARE PROTOTYPE - START HERE
+
+1. Extract the entire ZIP to a writable local folder.
+2. Install Python 3.13 from https://www.python.org/downloads/.
+3. Open the extracted folder containing run.py.
+
+WINDOWS:
+  Double-click setup_windows.bat once and wait for "Setup complete".
+  Double-click start_windows.bat whenever you want to use the app.
+
+MACOS / LINUX (Terminal in this folder):
+  bash setup_macos_linux.sh
+  bash start_macos_linux.sh
+
+Browser address: http://127.0.0.1:8000
+Keep the server window open. Press Ctrl+C in that window to stop.
+Create your administrator account on the first screen. No default password.
+Switch Japanese/English using the language button. Choose "Load demo".
+
+Read README.txt or README.md for complete step-by-step instructions,
+manual alternatives, backup/restore, troubleshooting, and limitations.
+
+Use fictional data for evaluation. Not clinically validated.
+Windows/macOS setup scripts have not been executed on those operating systems.

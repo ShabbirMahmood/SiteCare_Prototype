@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest==9.0.2
+httpx==0.28.1
+# Optional browser tests: python -m pip install playwright
+# Then: python -m playwright install chromium

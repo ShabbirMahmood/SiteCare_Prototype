@@ -1,0 +1,5 @@
+# Tested runtime dependencies. No Node.js, Docker, database server, or cloud account.
+fastapi==0.128.2
+uvicorn==0.48.0
+python-multipart==0.0.29
+Pillow==12.3.0
