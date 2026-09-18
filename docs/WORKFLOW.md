@@ -63,3 +63,12 @@ The date bar at the top of every signed-in page shows the current application ti
 Countdowns, candidates, photo freshness, appointment due/overdue calculations, calendars, and new-entry defaults all follow this clock. Existing saved timestamps are retained. A photo older than 24 hours at the selected time requires a new calibrated visit photo.
 
 Candidates follow numbered rotation after the most recent applicable puncture, skipping currently unavailable sites. A recovered site returns to its numbered position immediately: 3, 4, 6 becomes 3, 4, 5 when site 5 becomes eligible. Past resolved alerts do not reduce its priority.
+
+## Delete a patient (administrator only)
+
+1. Open the patient workspace and select **Profile**.
+2. Select **Delete patient…** at the bottom of the dialog.
+3. Check the patient name/ID and record counts, then type the exact patient ID.
+4. Optionally enter a reason and select **Delete permanently**.
+
+This removes the profile, photos, puncture history, skin observations, reviews, layout, and appointment, then returns to the patient list. Audit records and existing backup archives remain. Deletion cannot be undone in the app. If a photo file is locked, the app reports that cleanup is pending and retries it when SiteCare restarts.

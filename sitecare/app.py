@@ -34,7 +34,7 @@ from .rules import (JST, CHANGE_DAYS, PHOTO_VALID_HOURS, assess_point, body_to_i
                     event_applies, alert_active)
 from .security import password_hash, password_matches, token_hash
 from .storage import (audit, create_backup, decode_photo, initialize, one,
-                      patient_records, rows, transaction)
+                      patient_records, rows, transaction, next_id, cleanup_deleted_photos)
 
 ROOT = Path(__file__).resolve().parent.parent
 MAX_UPLOAD = 16 * 1024 * 1024
@@ -411,8 +411,8 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
         alias = text(data.get("alias"), "Display label", 100, True)
         start = timestamp(data.get("start_at"), "First appointment")
         with transaction(data_dir, True) as db:
-            pid = db.execute("INSERT INTO patients(code,alias,notes,therapy,start_at,created_at) VALUES(?,?,?,?,?,?)",
-                             (code, alias, text(data.get("notes", ""), "Notes"),
+            pid = db.execute("INSERT INTO patients(id,code,alias,notes,therapy,start_at,created_at) VALUES(?,?,?,?,?,?,?)",
+                             (next_id(db, "patients"), code, alias, text(data.get("notes", ""), "Notes"),
                               text(data.get("therapy", ""), "Therapy", 150), start, iso(now_utc()))).lastrowid
             db.executemany("INSERT INTO sites(patient_id,number,x,y) VALUES(?,?,?,?)",
                            [(pid, s["number"], s["x"], s["y"]) for s in default_sites()])
@@ -443,6 +443,34 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
             bump(db, patient_id)
             audit(db, user["display_name"], "patient.updated", str(patient_id), {"before": p, "after": updated}, patient_id)
         return {"ok": True}
+
+    @app.delete("/api/patients/{patient_id}")
+    async def delete_patient(request: Request, patient_id: int):
+        user = require(request, True)
+        data = await payload(request)
+        confirmation = text(data.get("confirm_code"), "Patient ID confirmation", 64, True)
+        reason = text(data.get("reason", ""), "Deletion reason", 2000)
+        with transaction(data_dir, True) as db:
+            p = check_version(db, patient_id, data)
+            if confirmation != p["code"]:
+                raise AppError("Type the exact patient ID to confirm deletion.", 422, "confirmation_required")
+            photos = rows(db, "SELECT filename FROM photos WHERE patient_id=?", (patient_id,))
+            counts = {}
+            # Child records must be removed before their photo/patient parents.
+            for table in ("events", "complications", "reviews", "appointments", "sites", "photos"):
+                counts[table] = db.execute(f"SELECT COUNT(*) FROM {table} WHERE patient_id=?", (patient_id,)).fetchone()[0]
+                db.execute(f"DELETE FROM {table} WHERE patient_id=?", (patient_id,))
+            db.executemany("INSERT OR IGNORE INTO pending_photo_deletions(filename) VALUES(?)",
+                           [(photo["filename"],) for photo in photos])
+            db.execute("DELETE FROM patients WHERE id=?", (patient_id,))
+            audit(db, user["display_name"], "patient.deleted", str(patient_id),
+                  {"code": p["code"], "alias": p["alias"], "reason": reason, "removed": counts}, patient_id)
+        # A file-system error must not falsely report that the committed deletion failed.
+        try:
+            cleanup_pending = cleanup_deleted_photos(data_dir) > 0
+        except (OSError, sqlite3.Error):
+            cleanup_pending = True
+        return {"ok": True, "photo_cleanup_pending": cleanup_pending}
 
     @app.post("/api/patients/{patient_id}/photos")
     async def upload_photo(request: Request, patient_id: int):
@@ -491,8 +519,8 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
                 alignment = {"cx": width / 2, "cy": height / 2, "ppm": width / 36,
                              "angle": 0, "calibration": None}
                 path.write_bytes(output.getvalue())
-                photo_id = db.execute("INSERT INTO photos(patient_id,filename,width,height,captured_at,uploaded_at,alignment_json) "
-                                      "VALUES(?,?,?,?,?,?,?)", (patient_id, filename, width, height, captured,
+                photo_id = db.execute("INSERT INTO photos(id,patient_id,filename,width,height,captured_at,uploaded_at,alignment_json) "
+                                      "VALUES(?,?,?,?,?,?,?,?)", (next_id(db, "photos"), patient_id, filename, width, height, captured,
                                                               iso(now_utc()), json.dumps(alignment))).lastrowid
                 bump(db, patient_id)
                 audit(db, user["display_name"], "photo.uploaded", str(photo_id),
@@ -648,9 +676,9 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
                 raise AppError("This point does not meet the configured checks. Select another point or record an already-performed event as history.",
                                422, "point_blocked", reasons=assessed["reasons"])
             # Historical records document what happened; warnings are preserved, not silently bypassed.
-            eid = db.execute("INSERT INTO events(patient_id,photo_id,site_number,x,y,occurred_at,recorded_at,actor,note,kind,"
-                             "exception_reason,warnings_json,alignment_json,request_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                             (patient_id, photo_id, n, point["x"], point["y"], occurred, iso(now_utc()), user["display_name"],
+            eid = db.execute("INSERT INTO events(id,patient_id,photo_id,site_number,x,y,occurred_at,recorded_at,actor,note,kind,"
+                             "exception_reason,warnings_json,alignment_json,request_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                             (next_id(db, "events"), patient_id, photo_id, n, point["x"], point["y"], occurred, iso(now_utc()), user["display_name"],
                               text(data.get("note", ""), "Note"), kind, reason, json.dumps(assessed["reasons"]),
                               raw_photo["alignment_json"], key)).lastrowid
             db.execute("UPDATE photos SET locked=1 WHERE id=?", (photo_id,))
@@ -710,9 +738,9 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
                 raise AppError("Place the alert centre on the photograph.")
             sites = rows(db, "SELECT number,x,y FROM sites WHERE patient_id=?", (patient_id,))
             n = nearest_site(point, sites)
-            aid = db.execute("INSERT INTO complications(patient_id,photo_id,site_number,x,y,radius,types_json,severity,observed_at,"
-                             "recorded_at,actor,note,alignment_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                             (patient_id, photo_id, n, point["x"], point["y"], radius, json.dumps(types), severity,
+            aid = db.execute("INSERT INTO complications(id,patient_id,photo_id,site_number,x,y,radius,types_json,severity,observed_at,"
+                             "recorded_at,actor,note,alignment_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                             (next_id(db, "complications"), patient_id, photo_id, n, point["x"], point["y"], radius, json.dumps(types), severity,
                               observed, iso(now_utc()), user["display_name"], text(data.get("note", ""), "Note"), raw["alignment_json"])).lastrowid
             db.execute("UPDATE photos SET locked=1 WHERE id=?", (photo_id,))
             bump(db, patient_id)

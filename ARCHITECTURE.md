@@ -73,7 +73,7 @@ All routes are declared inside `create_app()` in `sitecare/app.py`. Automatic Op
 | --- | --- |
 | Application clock | `GET/POST /api/clock` (changes require administrator role) |
 | Session | `GET /api/bootstrap`, `POST /api/setup`, `/api/login`, `/api/logout`, `/api/heartbeat` |
-| Patients | `GET/POST /api/patients`, `GET/PATCH /api/patients/{patient_id}` |
+| Patients | `GET/POST /api/patients`, `GET/PATCH/DELETE /api/patients/{patient_id}` |
 | Photos | `POST /api/patients/{patient_id}/photos`, `GET /api/photos/{photo_id}/image`, `POST /api/photos/{photo_id}/alignment` |
 | Layout and screening | `POST /api/patients/{patient_id}/layout`, `/api/patients/{patient_id}/screen-point` |
 | Puncture records | `POST /api/patients/{patient_id}/events`, `/api/events/{event_id}/void` |
@@ -103,6 +103,8 @@ erDiagram
 | --- | --- |
 | `schema_info` | Database schema version, currently 1. |
 | `app_clock` | Singleton persisted UTC offset, selected timestamp, and clock revision; null offset means system time. |
+| `id_sequences` | Monotonic record ID counters, preserving identity across patient deletions. |
+| `pending_photo_deletions` | Committed photo-file deletions awaiting cleanup or restart retry. |
 | `users` | Username, display name, password hash, and `admin` or `nurse` role. |
 | `sessions` | Hashed token, CSRF token, user reference, creation time, and last activity. |
 | `patients` | Unique code, alias, notes, therapy text, initial due date, active/demo flags, and edit version. |
@@ -238,3 +240,15 @@ Responses expose the effective time, mode, and revision in headers. The browser 
 Existing records keep their timestamps. When moving backward, events/alerts after the chosen time do not affect current screening; resolutions and voids take effect at their recorded times. The latest applicable photo is selected by capture time. Appointment due dates are derived from the latest applicable puncture without overwriting saved appointment confirmations just to preview another date. Full histories remain available; this is not a versioned reconstruction of every past profile or alignment edit.
 
 Advancing beyond the 24-hour photo limit correctly makes the photo stale. Upload and verify a synthetic visit photo captured at the demonstration time to continue the scenario. Active alerts do not heal just because the clock advances.
+
+## 13. Administrator patient deletion
+
+An administrator opens a patient, chooses **Profile**, then **Delete patient…**. A second dialog shows the saved name/ID, photo/event/alert counts, and deletion scope. The administrator types the exact patient code to enable **Delete permanently**. A reason can be recorded. Nurse accounts do not see this control and cannot call the endpoint.
+
+`DELETE /api/patients/{patient_id}` requires authentication, administrator authorization, CSRF, the current patient version, and the matching `confirm_code`. The transaction removes events, complications, recurrence reviews, the appointment, site coordinates, photo metadata, and the patient profile. It preserves previous audit entries and adds `patient.deleted` with the administrator, patient identity, counts, and optional reason. Existing backup archives are unchanged. There is no in-app undo.
+
+Photo filenames are queued in the same database transaction and removed from the photos directory after commit. File paths must resolve directly within that directory. A locked file leaves a durable cleanup entry and produces a visible warning; application startup retries pending cleanup. Missing files count as already removed. Database rollback leaves the photos untouched.
+
+Record IDs for patients, photos, events, and complications are allocated using persistent counters to prevent old links or audit identifiers from referring to newly created records. Initialization seeds counters from existing database maxima without changing existing IDs. Demo creation uses the same allocator and handles reloading the primary demo after deletion.
+
+Backup creation holds a database write lock while taking a snapshot and copying its referenced photographs, preventing a concurrent deletion from invalidating a backup in progress. Deletion tests use temporary synthetic databases and cover permissions, confirmation, stale edits, dependent data, file cleanup/retry, rollback, ID reuse, demo reload, and backup coordination.

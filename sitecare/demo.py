@@ -5,7 +5,7 @@ from datetime import timedelta
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 from .rules import default_sites, iso, now_utc
-from .storage import audit, one
+from .storage import audit, one, next_id
 
 
 def demo_image(path: Path):
@@ -37,40 +37,43 @@ def seed_demo(db, data_dir: Path, actor: str) -> int:
     if existing:
         return existing["id"]
     now = now_utc().replace(microsecond=0)
-    pid = db.execute("INSERT INTO patients(code,alias,notes,therapy,start_at,demo,created_at) VALUES(?,?,?,?,?,1,?)",
-                     ("DEMO-001", "Demo patient A / デモ患者 A",
+    pid = db.execute("INSERT INTO patients(id,code,alias,notes,therapy,start_at,demo,created_at) VALUES(?,?,?,?,?,?,1,?)",
+                     (next_id(db, "patients"), "DEMO-001", "Demo patient A / デモ患者 A",
                       "Synthetic training data only. The reference ruler is 10 cm. No actual patient data.",
                       "Medication-neutral demonstration", iso(now - timedelta(days=2)), iso(now))).lastrowid
     sites = default_sites()
     db.executemany("INSERT INTO sites VALUES(?,?,?,?)", [(pid, s["number"], s["x"], s["y"]) for s in sites])
-    filename = "synthetic-demo-001.jpg"
+    photoid = next_id(db, "photos")
+    filename = f"synthetic-demo-{photoid}.jpg"
     demo_image(data_dir / "photos" / filename)
     alignment = {"cx": 600, "cy": 520, "ppm": 30, "angle": 0,
                  "calibration": {"a": {"x": 180, "y": 800}, "b": {"x": 480, "y": 800}, "length_cm": 10}}
-    photoid = db.execute("INSERT INTO photos(patient_id,filename,width,height,captured_at,uploaded_at,alignment_json,"
-                        "verified,verified_at,verified_by,locked,demo) VALUES(?,?,1200,1000,?,?,?,1,?,?,1,1)",
-                        (pid, filename, iso(now), iso(now), json.dumps(alignment), iso(now), actor)).lastrowid
+    db.execute("INSERT INTO photos(id,patient_id,filename,width,height,captured_at,uploaded_at,alignment_json,"
+               "verified,verified_at,verified_by,locked,demo) VALUES(?,?,?,1200,1000,?,?,?,1,?,?,1,1)",
+               (photoid, pid, filename, iso(now), iso(now), json.dumps(alignment), iso(now), actor))
     for n, ago in [(1, 2), (2, 5), (3, 8), (8, 11)]:
         s = sites[n - 1]
-        db.execute("INSERT INTO events(patient_id,photo_id,site_number,x,y,occurred_at,recorded_at,actor,note,kind,"
-                   "exception_reason,alignment_json,request_key) VALUES(?,?,?,?,?,?,?,?,?,'history',?,?,?)",
-                   (pid, photoid, n, s["x"], s["y"], iso(now - timedelta(days=ago)), iso(now), actor,
+        db.execute("INSERT INTO events(id,patient_id,photo_id,site_number,x,y,occurred_at,recorded_at,actor,note,kind,"
+                   "exception_reason,alignment_json,request_key) VALUES(?,?,?,?,?,?,?,?,?,?,'history',?,?,?)",
+                   (next_id(db, "events"), pid, photoid, n, s["x"], s["y"], iso(now - timedelta(days=ago)), iso(now), actor,
                     "Synthetic historical example", "Seeded fictional example for interface testing.",
                     json.dumps(alignment), f"demo-{pid}-{n}"))
     s = sites[3]
     for ago, resolved in [(30, 24), (2, None)]:
-        db.execute("INSERT INTO complications(patient_id,photo_id,site_number,x,y,radius,types_json,severity,"
+        db.execute("INSERT INTO complications(id,patient_id,photo_id,site_number,x,y,radius,types_json,severity,"
                    "observed_at,recorded_at,actor,note,alignment_json,resolved_at,resolved_by,resolution_note) "
-                   "VALUES(?,?,?,?,?,1.5,?,'mild',?,?,?,?,?,?,?,?)",
-                   (pid, photoid, 4, s["x"], s["y"], json.dumps(["redness", "hardness"]),
+                   "VALUES(?,?,?,?,?,?,1.5,?,'mild',?,?,?,?,?,?,?,?)",
+                   (next_id(db, "complications"), pid, photoid, 4, s["x"], s["y"], json.dumps(["redness", "hardness"]),
                     iso(now - timedelta(days=ago)), iso(now), actor, "Synthetic skin-observation example.",
                     json.dumps(alignment), iso(now - timedelta(days=resolved)) if resolved else None,
                     actor if resolved else None, "Fictional recovery assessment." if resolved else None))
     sync_appointment(db, pid)
     for code, label, offset in [("DEMO-002", "Demo patient B / デモ患者 B", -1),
                                 ("DEMO-003", "Demo patient C / デモ患者 C", 3)]:
-        p = db.execute("INSERT INTO patients(code,alias,notes,start_at,demo,created_at) VALUES(?,?,?, ?,1,?)",
-                       (code, label, "Synthetic patient. Upload a test image to start mapping.",
+        if one(db, "SELECT id FROM patients WHERE code=?", (code,)):
+            continue
+        p = db.execute("INSERT INTO patients(id,code,alias,notes,start_at,demo,created_at) VALUES(?,?,?,?,?,1,?)",
+                       (next_id(db, "patients"), code, label, "Synthetic patient. Upload a test image to start mapping.",
                         iso(now + timedelta(days=offset)), iso(now))).lastrowid
         db.executemany("INSERT INTO sites VALUES(?,?,?,?)", [(p, s["number"], s["x"], s["y"]) for s in sites])
         sync_appointment(db, p)

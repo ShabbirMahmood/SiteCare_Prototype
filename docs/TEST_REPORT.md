@@ -1,5 +1,11 @@
 # Packaging verification report
 
+## Administrator deletion verification — 2026-09-18
+
+The full Windows test suite now completes with **98 passed**, with the same dependency deprecation warning. JavaScript syntax checking passed. New synthetic tests verify deletion of empty/populated profiles, dependent records and photos, preservation of other patients and audit history, permission/CSRF checks, typed confirmation, stale versions, transaction rollback, locked-file cleanup retry, permanent record IDs, demo reload, and backup/deletion coordination.
+
+A separate temporary demo installation was used to inspect the Profile deletion option and confirmation dialog in the browser. The final button was disabled until the exact patient ID was entered. Actual deletion was exercised by the automated API tests. No existing patient in the user's installation was deleted.
+
 ## Local update verification — 2026-09-18
 
 The numbered candidate-order fix and demonstration clock were verified on the current Windows workspace using Python 3.12. The full suite completed with **86 passed**, with one existing Starlette/AnyIO deprecation warning. JavaScript syntax checks passed for the modified modules.

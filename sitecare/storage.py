@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS app_clock(
  id INTEGER PRIMARY KEY CHECK(id=1), offset_seconds REAL, selected_at TEXT,
  revision INTEGER NOT NULL DEFAULT 0);
 INSERT OR IGNORE INTO app_clock(id) VALUES(1);
+CREATE TABLE IF NOT EXISTS id_sequences(name TEXT PRIMARY KEY, last_id INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS pending_photo_deletions(filename TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS users(
  id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, display_name TEXT NOT NULL,
  password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('admin','nurse')), created_at TEXT NOT NULL);
@@ -81,6 +83,44 @@ def initialize(data_dir: Path) -> None:
         db.executescript(SCHEMA)
         if db.execute("SELECT version FROM schema_info").fetchone()[0] != 1:
             raise RuntimeError("Unsupported database version. Preserve your data and contact the developer.")
+        # Preserve ID high-water marks before any deletion, including older databases.
+        for table in ("patients", "photos", "events", "complications"):
+            highest = db.execute(f"SELECT COALESCE(MAX(id),0) FROM {table}").fetchone()[0]
+            db.execute("INSERT INTO id_sequences VALUES(?,?) ON CONFLICT(name) DO UPDATE "
+                       "SET last_id=MAX(last_id,excluded.last_id)", (table, highest))
+        db.commit()
+    cleanup_deleted_photos(data_dir)
+
+
+def next_id(db, table: str) -> int:
+    """IDs remain unique after deletion, so old links cannot address new records."""
+    if table not in {"patients", "photos", "events", "complications"}:
+        raise ValueError("Unsupported record type")
+    highest = db.execute(f"SELECT COALESCE(MAX(id),0) FROM {table}").fetchone()[0]
+    previous = db.execute("SELECT last_id FROM id_sequences WHERE name=?", (table,)).fetchone()
+    value = max(highest, previous[0] if previous else 0) + 1
+    db.execute("INSERT INTO id_sequences VALUES(?,?) ON CONFLICT(name) DO UPDATE "
+               "SET last_id=excluded.last_id", (table, value))
+    return value
+
+
+def cleanup_deleted_photos(data_dir: Path) -> int:
+    """Retry committed deletions. Failed file removals remain queued for restart."""
+    photo_root = (data_dir / "photos").resolve()
+    with transaction(data_dir, True) as db:
+        for row in db.execute("SELECT filename FROM pending_photo_deletions").fetchall():
+            filename = row[0]
+            target = (photo_root / filename).resolve()
+            if target.parent != photo_root or target.name != filename:
+                continue
+            if db.execute("SELECT 1 FROM photos WHERE filename=?", (filename,)).fetchone():
+                continue
+            try:
+                target.unlink(missing_ok=True)
+            except OSError:
+                continue
+            db.execute("DELETE FROM pending_photo_deletions WHERE filename=?", (filename,))
+        return db.execute("SELECT COUNT(*) FROM pending_photo_deletions").fetchone()[0]
 
 
 @contextmanager
@@ -140,6 +180,14 @@ def create_backup(data_dir: Path, target: Path) -> Path:
     """Snapshot DB first, then copy the immutable photo files referenced by that DB.
     Login sessions are deliberately removed from the backup, not from the live DB.
     """
+    # Coordinate with uploads/deletions, including maintenance in another process.
+    # Use a separate read connection for backup; backing up a connection that owns
+    # a write transaction can wait indefinitely.
+    with transaction(data_dir, True):
+        return _create_backup(data_dir, target)
+
+
+def _create_backup(data_dir: Path, target: Path) -> Path:
     with TemporaryDirectory(prefix="sitecare-backup-") as tmp:
         snapshot = Path(tmp) / "sitecare.sqlite3"
         src, dest = connect(data_dir), sqlite3.connect(snapshot)

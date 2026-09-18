@@ -25,4 +25,8 @@
 .application-clock span{font-size:15px;font-variant-numeric:tabular-nums}
 .application-clock.manual{background:#fff4d9;border-color:#e9d39d;color:#77541c}
 #clock-pending{flex-basis:100%;font-weight:600}
+.patient-delete-section{border-top:1px solid #efd1ce;margin-top:24px;padding-top:20px}
+.patient-delete-section h3{color:#a24440;margin-bottom:8px}
+.patient-delete-section p{margin-bottom:14px}
+.deletion-summary{padding-left:22px;margin:0 0 18px;line-height:1.8}
 @media(max-width:650px){.application-clock{padding:10px 14px}.application-clock>div{gap:5px 10px}}

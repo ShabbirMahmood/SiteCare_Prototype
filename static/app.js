@@ -88,8 +88,33 @@ function addPatient(){
 function editProfile(p,onDone){
   openDialog({title:t('Patient profile','患者プロフィール'),body:`<p><span class="chip-id">${esc(p.code)}</span> ${t('Patient ID is permanent in this prototype.','この試作版では患者IDは固定です。')}</p>
     ${field(t('Display label','表示名'),input('alias',p.alias,'text','required maxlength="100"'))}${field(t('Therapy / protocol label','治療・手順名'),input('therapy',p.therapy,'text','maxlength="150"'))}
-    ${field(t('Care notes','ケアメモ'),`<textarea name="notes" maxlength="2000">${esc(p.notes)}</textarea>`)}${check('active',t('Active patient — include in appointment suggestions','管理中の患者として予約提案に含める'),p.active)}`,
+    ${field(t('Care notes','ケアメモ'),`<textarea name="notes" maxlength="2000">${esc(p.notes)}</textarea>`)}${check('active',t('Active patient — include in appointment suggestions','管理中の患者として予約提案に含める'),p.active)}
+    ${state.user.role==='admin'?`<div class="patient-delete-section"><h3>${t('Delete patient','患者を削除')}</h3><p>${t('Permanently remove this patient and their records. An audit trail is retained.','この患者と関連記録を完全に削除します。監査ログは保持されます。')}</p><button type="button" class="button danger" id="delete-patient">${t('Delete patient…','患者を削除…')}</button></div>`:''}`,
+    onOpen:form=>$('#delete-patient',form)?.addEventListener('click',()=>deletePatient(p.id)),
     onSubmit:async f=>{await api(`/api/patients/${p.id}`,{method:'PATCH',data:{...Object.fromEntries(f),active:f.has('active'),version:p.version}});toast(t('Profile updated.','プロフィールを更新しました。'));await onDone();}});
+}
+async function deletePatient(patientId){
+  const trigger=$('#delete-patient');if(trigger)trigger.disabled=true;
+  try{
+    const d=await api(`/api/patients/${patientId}`),p=d.patient;
+    openDialog({title:t('Permanently delete patient','患者を完全に削除'),danger:true,submit:t('Delete permanently','完全に削除'),
+      body:`<p><strong>${esc(p.alias)}</strong> · <span class="chip-id">${esc(p.code)}</span></p>
+        <div class="notice danger mb-16">${t('This removes the profile, all photographs, puncture records, skin alerts, reviews, site layout and appointment. It cannot be undone in the app. Existing backups and the audit trail are retained.','プロフィール・全写真・穿刺記録・皮膚所見・再評価・部位配置・予約を削除します。アプリ内で元に戻せません。既存バックアップと監査ログは保持されます。')}</div>
+        <ul class="deletion-summary"><li>${t('Photographs','写真')}: ${d.photos.length}</li><li>${t('Puncture records','穿刺記録')}: ${d.events.length}</li><li>${t('Skin observations','皮膚所見')}: ${d.alerts.length}</li></ul>
+        ${field(t('Type the patient ID to confirm','確認のため患者IDを入力'),input('confirm_code','','text','required maxlength="64" autocomplete="off"'),esc(p.code))}
+        ${field(t('Reason (optional)','理由（任意）'),'<textarea name="reason" maxlength="2000"></textarea>')}`,
+      onOpen:form=>{
+        const button=$('button[type=submit]',form),confirmation=$('[name=confirm_code]',form);
+        const validate=()=>{button.disabled=confirmation.value.trim()!==p.code;};
+        confirmation.addEventListener('input',validate);validate();
+      },
+      onSubmit:async f=>{
+        const result=await api(`/api/patients/${p.id}`,{method:'DELETE',data:{version:p.version,confirm_code:f.get('confirm_code'),reason:f.get('reason')}});
+        go('patients');
+        toast(result.photo_cleanup_pending?t('Patient deleted. Some photo files could not be removed; restart SiteCare to retry cleanup.','患者を削除しました。一部の写真ファイルを削除できませんでした。SiteCareを再起動すると再試行します。'):t('Patient and associated records deleted.','患者と関連記録を削除しました。'),result.photo_cleanup_pending);
+      }});
+  }catch(e){toast(e.message,true);}
+  finally{if(trigger)trigger.disabled=false;}
 }
 function editAppointment(p,onDone){
   const ap=p.appointment;

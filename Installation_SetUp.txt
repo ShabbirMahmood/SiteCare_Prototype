@@ -28,6 +28,12 @@ Reset All Pass
 ----------------------
 .\.venv\Scripts\python.exe manage.py reset-password adminadminadmin
 
+Turf Off Server
+------------------------
+
+
+
+
 
     *** Check All Installed Python Version 
         python --version
