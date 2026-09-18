@@ -1,5 +1,6 @@
-import {state,t,esc,$,$$,api,icon,toast,fmt,dayKey,jstInput,toISO,openDialog,field,input,check,badge,appointmentBadge} from './ui.js';
+import {appNow,state,t,esc,$,$$,api,icon,toast,fmt,dayKey,jstInput,toISO,openDialog,field,input,check,badge,appointmentBadge} from './ui.js';
 import {mountWorkspace} from './workspace.js';
+import {clockDialog,updateClockDisplay} from './clock-ui.js';
 
 let dispose = null, routeSequence = 0;
 const go = path => { if (location.hash === `#${path}`) renderRoute(); else location.hash = path; };
@@ -21,10 +22,12 @@ function shell(){
     <nav><div class="nav-section">${t('WORKSPACE','ワークスペース')}</div>${nav.filter(([key])=>key!=='history'||state.user.role==='admin').map(([key,label])=>`<button class="nav-item" data-route="${key}" title="${label}">${icon(key)}<span class="nav-label">${label}</span></button>`).join('')}</nav>
     <div class="sidebar-bottom"><div class="local-card"><div class="row">${icon('shield',15)}${t('Stored on this computer','このPCに保存')}</div>${t('Local files. No cloud upload.','外部クラウドへの送信なし。')}</div>
     <div class="user-card"><div class="avatar">${esc(state.user.display_name.slice(0,2).toUpperCase())}</div><div class="user-info"><strong>${esc(state.user.display_name)}</strong><small>${state.user.role==='admin'?t('Administrator','管理者'):t('Nurse','看護師')}</small></div></div></div></aside>
-    <div class="main-shell"><header class="topbar"><div class="topbar-path" id="breadcrumb">${t('Workspace','ワークスペース')}</div><div class="topbar-actions"><span class="environment-tag">PROTOTYPE</span><span class="date-chip">${icon('calendar',15)}${fmt(Date.now(),{year:'numeric',month:'short',day:'numeric',hour:undefined,minute:undefined})} · JST</span>${languageButton()}<button class="icon-button logout-button" id="logout" aria-label="${t('Sign out','ログアウト')}">${icon('logout',18)}</button></div></header><main class="main-content" id="main"></main></div></div>`;
+    <div class="main-shell"><header class="topbar"><div class="topbar-path" id="breadcrumb">${t('Workspace','ワークスペース')}</div><div class="topbar-actions"><span class="environment-tag">PROTOTYPE</span><span class="date-chip">${icon('calendar',15)}${fmt(appNow(),{year:'numeric',month:'short',day:'numeric',hour:undefined,minute:undefined})} · JST</span>${languageButton()}<button class="icon-button logout-button" id="logout" aria-label="${t('Sign out','ログアウト')}">${icon('logout',18)}</button></div></header><div class="application-clock" id="application-clock"><div><strong id="clock-mode"></strong><span id="clock-time"></span></div>${state.user.role==='admin'?`<button class="button secondary small-button" id="change-clock">${icon('calendar',16)}${t('Change date','日時を変更')}</button>`:''}<span id="clock-pending" class="hidden">${t('Date changed. Finish or close your current edit to refresh this view.','日時が変更されました。編集中の画面を保存または閉じると更新されます。')}</span></div><main class="main-content" id="main"></main></div></div>`;
   $$('[data-route]').forEach(b=>b.addEventListener('click',()=>go(b.dataset.route)));
   $('#logout').addEventListener('click',async()=>{try{await api('/api/logout',{method:'POST'});}catch{}state.user=null;if(dispose)dispose();await boot();});
   bindLanguage();
+  $('#change-clock')?.addEventListener('click',clockDialog);
+  updateClockDisplay();
 }
 
 function loginPage(setup){
@@ -92,7 +95,7 @@ function editAppointment(p,onDone){
   const ap=p.appointment;
   openDialog({title:t('Confirm next appointment','次回予約を確認'),body:`<p><strong>${esc(p.code)}</strong> · ${esc(p.alias)}</p>
     <div class="notice warning mb-16">${icon('clock',17)}<span>${t('Protocol due time:','手順上の予定期限：')} <strong>${fmt(ap.due_at)}</strong> JST.<br>${t('Moving an appointment does not change or clear this due time.','予約日時を変更しても、予定期限や期限超過の表示は消えません。')}</span></div>
-    ${field(t('Scheduled date and time (JST)','予約日時（日本時間）'),input('scheduled_at',jstInput(new Date(ap.scheduled_at)>new Date()?ap.scheduled_at:Date.now()+3600000),'datetime-local','required'))}
+    ${field(t('Scheduled date and time (JST)','予約日時（日本時間）'),input('scheduled_at',jstInput(new Date(ap.scheduled_at)>new Date(appNow())?ap.scheduled_at:appNow()+3600000),'datetime-local','required'))}
     ${field(t('Schedule change / confirmation note','変更理由・確認メモ'),'<textarea name="reason" maxlength="2000"></textarea>',t('Required when changing the suggested time.','提案日時から変更する場合は理由が必要です。'))}`,
     submit:t('Confirm appointment','予約を確定'),onSubmit:async f=>{await api(`/api/patients/${p.id}/appointment`,{method:'POST',data:{version:p.version,scheduled_at:toISO(f.get('scheduled_at')),reason:f.get('reason')}});toast(t('Appointment confirmed.','予約を確定しました。'));await onDone();}});
 }
@@ -116,8 +119,8 @@ async function loadDemo(){
 }
 function renderDashboard(main,patients){
   const active=patients.filter(p=>p.active),today=dayKey(),todayP=active.filter(p=>dayKey(p.appointment?.scheduled_at)===today),overdue=active.filter(p=>p.overdue),alerts=active.reduce((a,p)=>a+p.active_alerts,0);
-  const upcoming=active.filter(p=>new Date(p.appointment.scheduled_at)>=new Date()).sort((a,b)=>a.appointment.scheduled_at.localeCompare(b.appointment.scheduled_at)), next=upcoming[0];
-  const stats=[['calendar',t('Due today','本日の予定'),todayP.length,t(`${overdue.length} overdue to review`,`${overdue.length} 件の期限超過を確認`),''],['clock',t('Next 7 days','今後7日間'),upcoming.filter(p=>new Date(p.appointment.scheduled_at)-Date.now()<7*86400000).length,t('Next unresolved visits','次回未実施の予約'),'blue'],['alert',t('Active skin alerts','未回復の皮膚所見'),alerts,t('Remain blocked until recovered','回復確認まで使用不可'),'red'],['patients',t('Active patients','管理中の患者'),active.length,t('Profiles stored locally','プロフィールをローカル保存'),'']];
+  const upcoming=active.filter(p=>new Date(p.appointment.scheduled_at)>=new Date(appNow())).sort((a,b)=>a.appointment.scheduled_at.localeCompare(b.appointment.scheduled_at)), next=upcoming[0];
+  const stats=[['calendar',t('Due today','本日の予定'),todayP.length,t(`${overdue.length} overdue to review`,`${overdue.length} 件の期限超過を確認`),''],['clock',t('Next 7 days','今後7日間'),upcoming.filter(p=>new Date(p.appointment.scheduled_at)-appNow()<7*86400000).length,t('Next unresolved visits','次回未実施の予約'),'blue'],['alert',t('Active skin alerts','未回復の皮膚所見'),alerts,t('Remain blocked until recovered','回復確認まで使用不可'),'red'],['patients',t('Active patients','管理中の患者'),active.length,t('Profiles stored locally','プロフィールをローカル保存'),'']];
   main.innerHTML=`<div class="page-head"><div><div class="eyebrow">${t('YOUR CARE WORKSPACE','ケアワークスペース')}</div><h1>${t('Today, at a glance','本日の状況')}</h1><p>${t('Keep track of every site, skin observation and upcoming visit.','穿刺部位、皮膚所見、次回予約をまとめて確認。')}</p></div><button class="button primary new-patient">${icon('plus',18)}${t('Create patient','患者を登録')}</button></div>
     <div class="stat-grid">${stats.map(([ic,label,count,foot,color])=>`<div class="card stat-card"><div class="stat-top"><span>${label}</span><span class="stat-icon ${color}">${icon(ic,18)}</span></div><div class="stat-value">${count}</div><div class="stat-foot">${foot}</div></div>`).join('')}</div>
     <div class="dashboard-grid"><div class="stack"><section class="card"><div class="card-head"><h2>${t('Patient workspace','患者ワークスペース')}</h2><button class="button ghost small-button" id="view-all">${t('View all','すべて見る')}${icon('arrow',15)}</button></div>${patientTable(patients.slice(0,8),true)}${patients.length?`<div class="table-footer">${t('Select a patient to open their photo and site map.','患者を選択すると写真と部位マップを開きます。')}</div>`:''}</section>
@@ -128,7 +131,7 @@ function renderDashboard(main,patients){
   $$('.new-patient',main).forEach(b=>b.addEventListener('click',addPatient));$('#view-all').addEventListener('click',()=>go('patients'));$('#demo-load')?.addEventListener('click',loadDemo);bindOpenPatients(main);
 }
 
-async function renderCalendar(main,month=new Date(Date.now()+9*3600000).toISOString().slice(0,7)){
+async function renderCalendar(main,month=new Date(appNow()+9*3600000).toISOString().slice(0,7)){
   const result=await api(`/api/appointments?month=${month}`), patients=result.patients, today=dayKey(), actual=result.items.filter(i=>i.next), overdue=actual.filter(i=>i.overdue);
   const days=Array.from({length:42},(_,i)=>{const d=new Date(`${result.grid_start}T00:00:00+09:00`);d.setUTCDate(d.getUTCDate()+i);return dayKey(d);});
   main.innerHTML=`<div class="page-head"><div><div class="eyebrow">${t('VISIT PLANNING','訪問計画')}</div><h1>${t('Appointments','予約カレンダー')}</h1><p>${t('The next visit is suggested 72 hours after the latest recorded puncture.','最後の穿刺記録から72時間後を次回予定として提案します。')}</p></div><button class="button secondary" id="calendar-today">${t('This month','今月')}</button></div>
@@ -175,6 +178,22 @@ async function boot(){
 }
 window.addEventListener('hashchange',renderRoute);
 window.addEventListener('authlost',()=>{if(dispose)dispose();state.user=null;$('#dialog').close();boot();});
-let lastHeartbeat=0;
+let lastHeartbeat=0, pendingClockRefresh=false;
+function refreshClockView(){
+  if(!state.user)return;
+  updateClockDisplay();
+  if(pendingClockRefresh){
+    if($('#dialog').open||dispose?.hasDraft?.()){$('#clock-pending')?.classList.remove('hidden');return;}
+    pendingClockRefresh=false;shell();renderRoute();
+  }
+}
+window.addEventListener('clockchanged',()=>{pendingClockRefresh=true;setTimeout(refreshClockView,0);});
+$('#dialog').addEventListener('close',refreshClockView);
+setInterval(refreshClockView,1000);
+const pollClock=()=>{if(state.user&&!document.hidden)api('/api/clock',{activity:false}).catch(()=>{});};
+setInterval(pollClock,15000);
+window.addEventListener('focus',pollClock);
+window.addEventListener('storage',e=>{if(e.key==='sitecare-clock-changed')pollClock();});
+
 window.addEventListener('pointerdown',()=>{if(state.user&&Date.now()-lastHeartbeat>60000){lastHeartbeat=Date.now();api('/api/heartbeat',{method:'POST'}).catch(()=>{});}},{passive:true});
 boot();

@@ -55,3 +55,11 @@ A suggested appointment is not a confirmed booking. Rescheduling does not change
 ## End of session
 
 Finish saving, check the patient's history, sign out, and stop the local server when finished. Keep regular database-and-photo backups. Do not share a populated database or patient photographs when asking for technical support.
+
+## Demonstration date and candidate order
+
+The date bar at the top of every signed-in page shows the current application time in JST. Administrators can select **Change date**, choose **Choose demonstration date**, enter a date and time, then **Apply date**. Time continues advancing from that point. Select **Use system date** in the same dialog to return to real time. The choice applies to all patients/windows and persists after restart.
+
+Countdowns, candidates, photo freshness, appointment due/overdue calculations, calendars, and new-entry defaults all follow this clock. Existing saved timestamps are retained. A photo older than 24 hours at the selected time requires a new calibrated visit photo.
+
+Candidates follow numbered rotation after the most recent applicable puncture, skipping currently unavailable sites. A recovered site returns to its numbered position immediately: 3, 4, 6 becomes 3, 4, 5 when site 5 becomes eligible. Past resolved alerts do not reduce its priority.

@@ -24,6 +24,10 @@ User: Nurse A
 Pass: nursenursenurse
 
 
+Reset All Pass
+----------------------
+.\.venv\Scripts\python.exe manage.py reset-password adminadminadmin
+
 
     *** Check All Installed Python Version 
         python --version

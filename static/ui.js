@@ -1,16 +1,27 @@
-export const state = { user: null, csrf: '', lang: localStorage.getItem('sitecare-language') || 'ja', now: null };
+export const state = { user: null, csrf: '', lang: localStorage.getItem('sitecare-language') || 'ja', now: null, clock: null, clockAnchor: null };
+export const appNow = () => state.clockAnchor ? state.clockAnchor.now + performance.now() - state.clockAnchor.received : Date.now();
+export function syncClock(response) {
+  const now = Date.parse(response.headers.get('X-SiteCare-Now'));
+  const revision = Number(response.headers.get('X-SiteCare-Clock-Revision'));
+  if (!Number.isFinite(now) || (state.clock && revision < state.clock.revision)) return;
+  const changed = state.clock && state.clock.revision !== revision;
+  state.clock = {mode: response.headers.get('X-SiteCare-Clock-Mode'), revision};
+  state.clockAnchor = {now, received: performance.now()};
+  state.now = new Date(now).toISOString();
+  if (changed) window.dispatchEvent(new Event('clockchanged'));
+}
 export const t = (en, ja) => state.lang === 'ja' ? (ja || en) : en;
 export const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export const $ = (selector, root = document) => root.querySelector(selector);
 export const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-export const jstInput = (value = Date.now()) => new Date(new Date(value).getTime() + 9 * 3600000).toISOString().slice(0, 16);
+export const jstInput = (value = appNow()) => new Date(new Date(value).getTime() + 9 * 3600000).toISOString().slice(0, 16);
 export const toISO = value => value ? `${value}:00+09:00` : '';
-export const dayKey = (value = Date.now()) => new Date(new Date(value).getTime() + 9 * 3600000).toISOString().slice(0, 10);
+export const dayKey = (value = appNow()) => new Date(new Date(value).getTime() + 9 * 3600000).toISOString().slice(0, 10);
 export const fmt = (value, options = {}) => value ? new Intl.DateTimeFormat(state.lang === 'ja' ? 'ja-JP' : 'en-GB', {
   timeZone: 'Asia/Tokyo', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, ...options
 }).format(new Date(value)) : '—';
 export const shortTime = value => value ? new Intl.DateTimeFormat('ja-JP', {timeZone:'Asia/Tokyo', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false}).format(new Date(value)) : '';
-export function countdown(until, now = Date.now()) {
+export function countdown(until, now = appNow()) {
   if (!until) return '—';
   const mins = Math.max(0, Math.ceil((new Date(until).getTime() - new Date(now).getTime()) / 60000));
   if (!mins) return t('Rest period complete', '休止期間終了');
@@ -57,10 +68,12 @@ export function toast(message, error = false) {
 export async function api(path, {method = 'GET', data, form, activity = true} = {}) {
   const headers = {'X-User-Activity': activity ? '1' : '0'};
   if (method !== 'GET') headers['X-CSRF-Token'] = state.csrf;
+  if (method !== 'GET' && state.clock) headers['X-Clock-Revision'] = $('#dialog[open] form')?.dataset.clockRevision ?? String(state.clock.revision);
   if (data !== undefined) headers['Content-Type'] = 'application/json';
   let response;
   try { response = await fetch(path, {method, headers, body: form || (data !== undefined ? JSON.stringify(data) : undefined), credentials: 'same-origin', cache: 'no-store'}); }
   catch { throw new Error(t('The local server is unavailable. Keep the SiteCare terminal open and retry.', 'ローカルサーバーに接続できません。SiteCare の起動ウィンドウを確認してください。')); }
+  syncClock(response);
   const result = await response.json().catch(() => ({error: t('The server could not complete this request.', '処理に失敗しました。')}));
   if (!response.ok) {
     if (response.status === 401 && !path.includes('/login')) window.dispatchEvent(new Event('authlost'));
@@ -81,6 +94,7 @@ export function openDialog({title, body, submit = t('Save','保存'), onSubmit, 
     <div class="dialog-foot"><button type="button" class="button secondary close-dialog">${t('Cancel','キャンセル')}</button>${onSubmit ? `<button type="submit" class="button ${danger?'danger':'primary'}">${submit}</button>` : ''}</div></form>`;
   $$('.close-dialog', dialog).forEach(b => b.addEventListener('click', () => dialog.close()));
   const form = $('form', dialog);
+  if (state.clock) form.dataset.clockRevision = String(state.clock.revision);
   form.addEventListener('submit', async event => {
     event.preventDefault(); if (!onSubmit) return;
     const button = $('button[type=submit]', form), error = $('.form-error', form);

@@ -27,9 +27,11 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from starlette.background import BackgroundTask
 
 from . import __version__
+from .clock import clock_offset, system_now, read_clock, describe_clock
 from .rules import (JST, CHANGE_DAYS, PHOTO_VALID_HOURS, assess_point, body_to_image,
                     default_sites, distance, iso, nearest_site, now_utc, parse_time,
-                    photo_ready, policy_info, relevant_complications, screen_sites)
+                    photo_ready, policy_info, relevant_complications, screen_sites,
+                    event_applies, alert_active)
 from .security import password_hash, password_matches, token_hash
 from .storage import (audit, create_backup, decode_photo, initialize, one,
                       patient_records, rows, transaction)
@@ -128,11 +130,27 @@ def bump(db, patient_id: int):
     db.execute("UPDATE patients SET version=version+1 WHERE id=?", (patient_id,))
 
 
+def appointment_due(db, p):
+    at = iso(now_utc())
+    last = one(db, "SELECT occurred_at FROM events WHERE patient_id=? AND occurred_at<=? "
+                   "AND (voided_at IS NULL OR voided_at>?) ORDER BY occurred_at DESC,id DESC LIMIT 1",
+               (p["id"], at, at))
+    return iso(parse_time(last["occurred_at"]) + timedelta(days=CHANGE_DAYS)) if last else p["start_at"]
+
+
+def effective_appointment(db, p):
+    existing = one(db, "SELECT * FROM appointments WHERE patient_id=?", (p["id"],))
+    due = appointment_due(db, p)
+    if existing and existing["due_at"] == due and parse_time(existing["updated_at"]) <= now_utc():
+        return existing
+    # Previewing a different date must not erase saved appointment confirmations.
+    return {"patient_id": p["id"], "due_at": due, "scheduled_at": due,
+            "status": "suggested", "reason": "", "updated_at": iso(now_utc())}
+
+
 def sync_appointment(db, patient_id: int, *, force: bool = False):
     p = patient(db, patient_id)
-    last = one(db, "SELECT occurred_at FROM events WHERE patient_id=? AND voided_at IS NULL "
-                   "ORDER BY occurred_at DESC,id DESC LIMIT 1", (patient_id,))
-    due = iso(parse_time(last["occurred_at"]) + timedelta(days=CHANGE_DAYS)) if last else p["start_at"]
+    due = appointment_due(db, p)
     existing = one(db, "SELECT * FROM appointments WHERE patient_id=?", (patient_id,))
     if not existing or existing["due_at"] != due or force:
         db.execute("INSERT INTO appointments(patient_id,due_at,scheduled_at,status,reason,updated_at) "
@@ -142,17 +160,20 @@ def sync_appointment(db, patient_id: int, *, force: bool = False):
 
 
 def latest_photo(db, patient_id: int) -> dict | None:
-    return decode_photo(one(db, "SELECT * FROM photos WHERE patient_id=? ORDER BY id DESC LIMIT 1", (patient_id,)))
+    return decode_photo(one(db, "SELECT * FROM photos WHERE patient_id=? AND captured_at<=? ORDER BY id DESC LIMIT 1",
+                            (patient_id, iso(now_utc()))))
 
 
 def workspace(db, patient_id: int) -> dict:
     p = patient(db, patient_id)
     sites, events, alerts, reviews = patient_records(db, patient_id)
     photos = [decode_photo(r) for r in rows(db, "SELECT * FROM photos WHERE patient_id=? ORDER BY id DESC", (patient_id,))]
-    states, candidates = screen_sites(sites, events, alerts, reviews, photos[0] if photos else None, now_utc())
+    current_photo = latest_photo(db, patient_id)
+    states, candidates = screen_sites(sites, events, alerts, reviews, current_photo, now_utc())
     return {"patient": p, "sites": sites, "events": events, "alerts": alerts, "reviews": reviews,
             "photos": photos, "states": states, "candidates": candidates if p["active"] else [],
-            "appointment": one(db, "SELECT * FROM appointments WHERE patient_id=?", (patient_id,)),
+            "current_photo_id": current_photo["id"] if current_photo else None,
+            "appointment": effective_appointment(db, p),
             "now": iso(now_utc()), "policy": policy_info(),
             "layout_locked": bool(events or alerts)}
 
@@ -163,13 +184,13 @@ def summaries(db) -> list[dict]:
         sites, events, alerts, reviews = patient_records(db, p["id"])
         photo = latest_photo(db, p["id"])
         states, candidates = screen_sites(sites, events, alerts, reviews, photo, now_utc())
-        appt = one(db, "SELECT * FROM appointments WHERE patient_id=?", (p["id"],))
+        appt = effective_appointment(db, p)
         result.append({**p, "appointment": appt, "eligible_count": sum(s["status"] == "eligible" for s in states),
                        "resting_count": sum(s["status"] == "resting" for s in states),
-                       "active_alerts": sum(not a["resolved_at"] for a in alerts),
+                       "active_alerts": sum(alert_active(a, now_utc()) for a in alerts),
                        "review_count": sum(s["needs_review"] for s in states),
                        "photo_count": db.execute("SELECT COUNT(*) FROM photos WHERE patient_id=?", (p["id"],)).fetchone()[0],
-                       "last_used_at": next((e["occurred_at"] for e in events if not e["voided_at"]), None),
+                       "last_used_at": next((e["occurred_at"] for e in events if event_applies(e, now_utc())), None),
                        "candidates": candidates if p["active"] else [],
                        "overdue": bool(p["active"] and appt and parse_time(appt["due_at"]) < now_utc())})
     return result
@@ -218,15 +239,15 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
         if token and len(token) <= 200:
             with transaction(data_dir) as db:
                 session = one(db, "SELECT * FROM sessions WHERE token_hash=?", (token_hash(token),))
-                if session and (now_utc() - parse_time(session["touched_at"]) < timedelta(minutes=30)
-                                and now_utc() - parse_time(session["created_at"]) < timedelta(hours=8)):
+                if session and (system_now() - parse_time(session["touched_at"]) < timedelta(minutes=30)
+                                and system_now() - parse_time(session["created_at"]) < timedelta(hours=8)):
                     request.state.session_hash = session["token_hash"]
                     request.state.csrf = session["csrf"]
                     if session["user_id"]:
                         request.state.user = one(db, "SELECT id,username,display_name,role FROM users WHERE id=?", (session["user_id"],))
                     # Only explicit activity refreshes idle timeout. Background polls do not.
                     if request.headers.get("x-user-activity") == "1":
-                        db.execute("UPDATE sessions SET touched_at=? WHERE token_hash=?", (iso(now_utc()), session["token_hash"]))
+                        db.execute("UPDATE sessions SET touched_at=? WHERE token_hash=?", (iso(system_now()), session["token_hash"]))
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             origin = request.headers.get("origin")
             expected_origin = f"{request.url.scheme}://{request.url.netloc}"
@@ -234,6 +255,10 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
                 return JSONResponse({"error": "Cross-origin writes are not allowed.", "code": "csrf"}, status_code=403)
             if not request.state.csrf or not secrets.compare_digest(request.headers.get("x-csrf-token", ""), request.state.csrf):
                 return JSONResponse({"error": "Security token expired. Refresh the page and sign in again.", "code": "csrf"}, status_code=403)
+            revision = request.headers.get("x-clock-revision")
+            if revision is not None and revision != str(request.state.clock["revision"]):
+                return JSONResponse({"error": "The application date changed in another window. Refresh before saving.",
+                                     "code": "clock_conflict"}, status_code=409)
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -245,11 +270,26 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
         response.headers["Permissions-Policy"] = "camera=(self), microphone=(), geolocation=()"
         return response
 
+    @app.middleware("http")
+    async def application_clock(request: Request, call_next):
+        with transaction(data_dir) as db:
+            request.state.clock = read_clock(db)
+        context = clock_offset.set(request.state.clock["offset_seconds"] or 0)
+        try:
+            response = await call_next(request)
+            clock = describe_clock(request.state.clock)
+            response.headers["X-SiteCare-Now"] = clock["now"]
+            response.headers["X-SiteCare-Clock-Mode"] = clock["mode"]
+            response.headers["X-SiteCare-Clock-Revision"] = str(clock["revision"])
+            return response
+        finally:
+            clock_offset.reset(context)
+
     def new_session(db, user_id: int | None = None) -> tuple[str, str]:
         token, csrf = secrets.token_urlsafe(40), secrets.token_urlsafe(32)
-        now = iso(now_utc())
+        now = iso(system_now())
         db.execute("DELETE FROM sessions WHERE touched_at<? OR created_at<?",
-                   (iso(now_utc() - timedelta(minutes=30)), iso(now_utc() - timedelta(hours=8))))
+                   (iso(system_now() - timedelta(minutes=30)), iso(system_now() - timedelta(hours=8))))
         db.execute("INSERT INTO sessions VALUES(?,?,?,?,?)", (token_hash(token), csrf, user_id, now, now))
         return token, csrf
 
@@ -267,8 +307,38 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
             if not request.state.session_hash:
                 token, csrf = new_session(db)
             data = {"user": request.state.user, "setup_needed": needs_setup, "csrf": csrf,
-                    "version": __version__, "now": iso(now_utc()), "policy": policy_info()}
+                    "version": __version__, "now": iso(now_utc()), "policy": policy_info(),
+                    "clock": describe_clock(request.state.clock)}
             return session_response(data, token) if token else data
+
+    @app.get("/api/clock")
+    def get_clock(request: Request):
+        require(request)
+        return describe_clock(request.state.clock)
+
+    @app.post("/api/clock")
+    async def set_clock(request: Request):
+        user = require(request, True)
+        data = await payload(request)
+        mode = data.get("mode")
+        if mode not in ("system", "manual"):
+            raise AppError("Choose system or manual date mode.")
+        selected = timestamp(data.get("now"), "Demonstration date") if mode == "manual" else None
+        offset = (parse_time(selected) - system_now()).total_seconds() if selected else None
+        revision = integer(data.get("revision"), "Clock version", 0)
+        with transaction(data_dir, True) as db:
+            before = read_clock(db)
+            if before["revision"] != revision:
+                raise AppError("The application date changed in another window. Refresh before saving.", 409, "clock_conflict")
+            db.execute("UPDATE app_clock SET offset_seconds=?,selected_at=?,revision=revision+1 WHERE id=1",
+                       (offset, selected))
+            # Existing patient forms must reload under the new date before saving.
+            db.execute("UPDATE patients SET version=version+1")
+            request.state.clock = read_clock(db)
+            clock_offset.set(offset or 0)
+            audit(db, user["display_name"], "clock.changed", "application",
+                  {"before": before, "after": request.state.clock, "system_at": iso(system_now())})
+        return describe_clock(request.state.clock)
 
     @app.post("/api/setup")
     async def setup(request: Request):
@@ -557,7 +627,7 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
             if kind == "procedure":
                 if not p["active"]:
                     raise AppError("This patient is inactive.", 422)
-                if latest["id"] != photo_id or not photo_ready(photo, now_utc()):
+                if not latest or latest["id"] != photo_id or not photo_ready(photo, now_utc()):
                     raise AppError("Upload and verify a current photo (captured within 24 hours) for this visit.", 422, "fresh_photo_required")
                 if now_utc() - parse_time(occurred) > timedelta(hours=24):
                     raise AppError("Older entries must use Historical record mode.", 422)
@@ -566,7 +636,7 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
                 if db.execute("SELECT 1 FROM events WHERE photo_id=? AND kind='procedure' AND voided_at IS NULL", (photo_id,)).fetchone():
                     raise AppError("A new procedure is already recorded on this photo. Upload a new visit photograph.", 422, "fresh_photo_required")
             sites, events, alerts, reviews = patient_records(db, patient_id)
-            previous = [e for e in events if not e["voided_at"]]
+            previous = [e for e in events if event_applies(e, now_utc())]
             if kind == "procedure" and previous and occurred < max(e["occurred_at"] for e in previous):
                 raise AppError("Out-of-order entries must use Historical record mode.", 422)
             n = nearest_site(point, sites)
@@ -603,6 +673,8 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
             check_version(db, event["patient_id"], data)
             if event["voided_at"]:
                 raise AppError("This record has already been voided.", 409)
+            if parse_time(event["occurred_at"]) > now_utc():
+                raise AppError("The application date is earlier than this record. Change the date before voiding it.", 422)
             db.execute("UPDATE events SET voided_at=?,voided_by=?,void_reason=? WHERE id=?",
                        (iso(now_utc()), user["display_name"], reason, event_id))
             sync_appointment(db, event["patient_id"])
@@ -662,6 +734,8 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
             check_version(db, alert["patient_id"], data)
             if alert["resolved_at"]:
                 raise AppError("This alert is already resolved.", 409)
+            if parse_time(alert["observed_at"]) > now_utc():
+                raise AppError("The application date is earlier than this observation. Change the date before resolving it.", 422)
             db.execute("UPDATE complications SET resolved_at=?,resolved_by=?,resolution_note=? WHERE id=?",
                        (iso(now_utc()), user["display_name"], note, alert_id))
             bump(db, alert["patient_id"])
@@ -700,6 +774,7 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
             raise AppError("Choose a future appointment time. The original due time remains visible if overdue.")
         with transaction(data_dir, True) as db:
             check_version(db, patient_id, data)
+            sync_appointment(db, patient_id)
             appt = one(db, "SELECT * FROM appointments WHERE patient_id=?", (patient_id,))
             if scheduled != appt["due_at"] and not reason:
                 raise AppError("Enter a reason when changing the suggested time.")
@@ -737,8 +812,10 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
                         if future >= begin:
                             items.append({**base, "at": iso(future), "kind": "projection", "overdue": False, "next": False})
                         step += 1
-                for e in rows(db, "SELECT id,occurred_at,site_number FROM events WHERE patient_id=? AND voided_at IS NULL "
-                                  "AND occurred_at>=? AND occurred_at<?", (p["id"], iso(begin), iso(end))):
+                for e in rows(db, "SELECT id,occurred_at,site_number FROM events WHERE patient_id=? "
+                                  "AND (voided_at IS NULL OR voided_at>?) AND occurred_at<=? "
+                                  "AND occurred_at>=? AND occurred_at<?",
+                              (p["id"], iso(now_utc()), iso(now_utc()), iso(begin), iso(end))):
                     items.append({**base, "at": e["occurred_at"], "kind": "completed", "next": False,
                                   "site_number": e["site_number"], "overdue": False})
         return {"items": sorted(items, key=lambda i: i["at"]), "patients": patients, "now": iso(now_utc()),

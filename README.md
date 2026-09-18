@@ -20,7 +20,7 @@ Python must be installed separately. Internet access is needed to install Python
 
 Use Python **3.13** to match the tested Python minor version. The launcher accepts Python 3.11 or newer, but other Python versions have not been verified for this package. The packaging checks used Python 3.13.5 on Linux.
 
-Use a desktop browser such as Chrome or Edge. Set your computer's date and time correctly: countdowns depend on the computer clock. The interface displays and accepts clinical date/time values in **Japan Standard Time (UTC+09:00)**, even on a computer outside Japan.
+Use a desktop browser such as Chrome or Edge. The app uses the computer clock by default. Administrators can use the top date bar's Change date control to set a shared demonstration date/time, or choose Use system date to reset it. Countdown and appointment calculations follow the selected clock; saved record timestamps are preserved. The interface displays and accepts clinical date/time values in **Japan Standard Time (UTC+09:00)**, even on a computer outside Japan.
 
 Extract the entire ZIP before running anything. Keep all the extracted files and folders together. Choose an ordinary writable local folder, for example `C:\SiteCare_Prototype`, or a folder inside your user directory. Avoid `Program Files`, network shares, and cloud-synchronized folders for the live database. You do not need to run the application as an administrator.
 

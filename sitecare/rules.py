@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from math import cos, sin, pi, hypot
 from typing import Any
+from .clock import now_utc
 
 UTC = timezone.utc
 JST = timezone(timedelta(hours=9), "JST")
@@ -20,10 +21,6 @@ PHOTO_VALID_HOURS = 24
 RECURRENCE_DAYS = 90  # Prototype heuristic, not a clinical standard.
 RECURRENCE_COUNT = 2
 EPSILON = 1e-8
-
-
-def now_utc() -> datetime:
-    return datetime.now(UTC)
 
 
 def iso(value: datetime) -> str:
@@ -110,7 +107,7 @@ def assess_point(point: dict, number: int, events: list[dict], complications: li
     """
     reasons: list[dict] = []
     locks: list[datetime] = []
-    valid_events = [e for e in events if not e.get("voided_at") and parse_time(e["occurred_at"]) <= as_of]
+    valid_events = [e for e in events if event_applies(e, as_of)]
     same = [e for e in valid_events if e["site_number"] == number]
     last = max(same, key=lambda e: e["occurred_at"]) if same else None
     for e in valid_events:
@@ -158,14 +155,23 @@ def assess_point(point: dict, number: int, events: list[dict], complications: li
 def screen_sites(sites: list[dict], events: list[dict], complications: list[dict],
                  reviews: list[dict], photo: dict | None, as_of: datetime) -> tuple[list[dict], list[int]]:
     states = [assess_point(s, s["number"], events, complications, reviews, photo, as_of) for s in sites]
-    previous = [e for e in events if not e.get("voided_at") and parse_time(e["occurred_at"]) <= as_of]
+    previous = [e for e in events if event_applies(e, as_of)]
     last_number = max(previous, key=lambda e: e["occurred_at"])["site_number"] if previous else 0
     eligible = sorted((s for s in states if s["status"] == "eligible"),
-                      key=lambda s: (s["complication_count"], s["last_used_at"] or "",
-                                     (s["number"] - last_number - 1) % 14))
+                      key=lambda s: (s["number"] - last_number - 1) % 14)
     # Never invent candidates when fewer than three meet the configured checks.
     candidates = [s["number"] for s in eligible[:3]]
     return states, candidates
+
+
+def event_applies(event: dict, as_of: datetime) -> bool:
+    return (parse_time(event["occurred_at"]) <= as_of and
+            (not event.get("voided_at") or parse_time(event["voided_at"]) > as_of))
+
+
+def alert_active(alert: dict, as_of: datetime) -> bool:
+    return (parse_time(alert["observed_at"]) <= as_of and
+            (not alert.get("resolved_at") or parse_time(alert["resolved_at"]) > as_of))
 
 
 def policy_info() -> dict:

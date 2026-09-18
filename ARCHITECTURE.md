@@ -1,6 +1,6 @@
 # SiteCare Architecture
 
-This document describes the current implementation of SiteCare, version `1.0.0-prototype`, including the removal of the recurrence-review blocking rule.
+This document describes the current implementation of SiteCare, version `1.0.0-prototype`, including numbered candidate rotation and the shared demonstration clock.
 
 ## 1. Purpose and runtime
 
@@ -36,6 +36,7 @@ flowchart TD
 | `run.py` | Parses launch options, creates the application, starts Uvicorn, and optionally opens a browser. |
 | `manage.py` | Provides backup, database/image integrity checks, and local password reset. |
 | `sitecare/app.py` | Application factory, middleware, API routes, input validation, authorization, and workflow coordination. |
+| `sitecare/clock.py` | Request-scoped application clock, with separate real time for authentication. |
 | `sitecare/rules.py` | Time and coordinate utilities, site eligibility, rest countdowns, and candidate ranking. |
 | `sitecare/storage.py` | SQLite schema, connection handling, transactions, serialization, audit writes, and backups. |
 | `sitecare/security.py` | Password hashing/verification and session-token hashing. |
@@ -43,6 +44,7 @@ flowchart TD
 | `templates/index.html` | HTML shell loading the CSS and JavaScript entry module. |
 | `static/app.js` | Login, navigation, overview, patient list, appointments, settings, audit, and help. |
 | `static/workspace.js` | Photo alignment, SVG overlay, site selection, exact-point screening, and record dialogs. |
+| `static/clock-ui.js` | Shared date/time dialog and visible clock indicator. |
 | `static/ui.js` | Shared UI state, API wrapper, translations, dialogs, formatting, icons, and notifications. |
 | `static/style.css` | Typography, component styles, responsive layouts, and print styles. |
 | `tests/` | Rule-engine and API regression tests with synthetic fixtures and temporary databases. |
@@ -69,6 +71,7 @@ All routes are declared inside `create_app()` in `sitecare/app.py`. Automatic Op
 
 | Area | Routes |
 | --- | --- |
+| Application clock | `GET/POST /api/clock` (changes require administrator role) |
 | Session | `GET /api/bootstrap`, `POST /api/setup`, `/api/login`, `/api/logout`, `/api/heartbeat` |
 | Patients | `GET/POST /api/patients`, `GET/PATCH /api/patients/{patient_id}` |
 | Photos | `POST /api/patients/{patient_id}/photos`, `GET /api/photos/{photo_id}/image`, `POST /api/photos/{photo_id}/alignment` |
@@ -99,6 +102,7 @@ erDiagram
 | Table | Stored information |
 | --- | --- |
 | `schema_info` | Database schema version, currently 1. |
+| `app_clock` | Singleton persisted UTC offset, selected timestamp, and clock revision; null offset means system time. |
 | `users` | Username, display name, password hash, and `admin` or `nurse` role. |
 | `sessions` | Hashed token, CSRF token, user reference, creation time, and last activity. |
 | `patients` | Unique code, alias, notes, therapy text, initial due date, active/demo flags, and edit version. |
@@ -136,9 +140,9 @@ Alignment stores navel pixel coordinates (`cx`, `cy`), pixels per centimetre (`p
 
 Status precedence is `blocked`, then `resting`, then `unverified`, then `eligible`. Responses include the contributing reasons and the latest applicable rest-unlock time.
 
-**Unblocking:** Recording recovery clears that alert's restriction immediately. No extra "two related episodes in 90 days" review is required. Other unresolved alerts, rest periods, and photo/geometry checks remain independent. Existing recurrence-review records and the API are retained for compatibility; `needs_review` is always false. Related observations within 90 days still contribute to the informational count and candidate ordering.
+**Unblocking:** Recording recovery clears that alert's restriction immediately. No extra "two related episodes in 90 days" review is required. Other unresolved alerts, rest periods, and photo/geometry checks remain independent. Existing recurrence-review records and the API are retained for compatibility; `needs_review` is always false. Related observations within 90 days contribute only to informational counts.
 
-Candidate selection returns at most three eligible numbered sites, ordered by complication count, prior use time, and rotation order after the latest used site. It never fills missing slots with blocked sites.
+Candidate selection returns at most three eligible numbered sites, ordered by numbered rotation after the latest applicable puncture, wrapping from 14 to 1. Resolved complications and older use do not lower a site's rank. For example, resolving site 5 changes eligible candidates 3, 4, 6 to 3, 4, 5. It never fills missing slots with blocked sites.
 
 ## 8. Main write workflows
 
@@ -207,7 +211,7 @@ Both server and maintenance commands accept `--data-dir`; use the same directory
 
 Backups use SQLite's snapshot API and include the photo files referenced by that snapshot. Login sessions are removed from the backup copy. Restoration is manual: stop the application and replace the full data directory from a backup rather than merging unrelated databases and photos.
 
-The test suite uses FastAPI TestClient, synthetic images, and temporary databases. It covers screening boundaries, uploads, alignment, authentication, concurrency conflicts, recording, recovery, appointments, export, and backups. After the recurrence-hold change, the local suite completed with **71 passed**, with one dependency deprecation warning. This is backend/rule verification, not a complete browser regression or clinical validation.
+The test suite uses FastAPI TestClient, synthetic images, and temporary databases. It covers screening boundaries, uploads, alignment, authentication, concurrency conflicts, recording, recovery, appointments, export, backups, and the shared clock. After the candidate-order and demonstration-clock changes, the local suite completed with **86 passed**, with one dependency deprecation warning. A browser smoke check verified date selection, dashboard/calendar refresh, system-date reset, and workspace rendering using a temporary synthetic installation. This is not a complete browser regression or clinical validation.
 
 ## 11. Where to make changes
 
@@ -222,3 +226,15 @@ The test suite uses FastAPI TestClient, synthetic images, and temporary database
 | Schema, transactions, backup format | `sitecare/storage.py` |
 
 When changing a rule, keep server behavior, UI explanations, regression tests, and documentation consistent. Schema changes need an explicit migration approach before applying them to existing local data.
+
+## 12. Application date and time
+
+The shared date bar offers **Change date** to administrators. System mode follows the computer clock. Manual mode accepts a JST date/time and stores its offset from real UTC; time continues running from that chosen instant, including across restarts. **Use system date** removes the offset. No operating-system clock changes are made.
+
+The offset is loaded from `app_clock` for each request and applied through a ContextVar. It drives screening, rest countdowns, photo freshness, event validation/timestamps, recovery times, appointments, calendars, demo generation, and audit times. Authentication/session expiry and login throttling use real time. Clock-change audits also retain the real system timestamp.
+
+Responses expose the effective time, mode, and revision in headers. The browser anchors this time to its monotonic clock, uses it for all default date fields, and checks for shared-clock changes every 15 seconds, on focus, and after changes from another tab. Clock revisions and patient versions reject stale saves. Open dialogs and unsaved photo alignment are retained until dismissed or refreshed.
+
+Existing records keep their timestamps. When moving backward, events/alerts after the chosen time do not affect current screening; resolutions and voids take effect at their recorded times. The latest applicable photo is selected by capture time. Appointment due dates are derived from the latest applicable puncture without overwriting saved appointment confirmations just to preview another date. Full histories remain available; this is not a versioned reconstruction of every past profile or alignment edit.
+
+Advancing beyond the 24-hour photo limit correctly makes the photo stale. Upload and verify a synthetic visit photo captured at the demonstration time to continue the scenario. Active alerts do not heal just because the clock advances.

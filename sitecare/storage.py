@@ -13,6 +13,10 @@ SCHEMA = """
 PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS schema_info(version INTEGER NOT NULL);
 INSERT INTO schema_info SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM schema_info);
+CREATE TABLE IF NOT EXISTS app_clock(
+ id INTEGER PRIMARY KEY CHECK(id=1), offset_seconds REAL, selected_at TEXT,
+ revision INTEGER NOT NULL DEFAULT 0);
+INSERT OR IGNORE INTO app_clock(id) VALUES(1);
 CREATE TABLE IF NOT EXISTS users(
  id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, display_name TEXT NOT NULL,
  password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('admin','nurse')), created_at TEXT NOT NULL);

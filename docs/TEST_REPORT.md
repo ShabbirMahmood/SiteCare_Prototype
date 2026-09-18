@@ -1,5 +1,13 @@
 # Packaging verification report
 
+## Local update verification — 2026-09-18
+
+The numbered candidate-order fix and demonstration clock were verified on the current Windows workspace using Python 3.12. The full suite completed with **86 passed**, with one existing Starlette/AnyIO deprecation warning. JavaScript syntax checks passed for the modified modules.
+
+New coverage includes the exact candidate transition from 3, 4, 6 to 3, 4, 5 after recovery; rotation wraparound; forward/backward application dates; rest expiry and stale photographs; appointment calculations; unchanged saved timestamps; clock persistence and isolation between installations; invalid dates; stale edits; administrator permissions; and real-time session expiry.
+
+A browser check used a temporary database with synthetic demo records on a separate local port. It verified the date dialog, running demo-date indicator, dashboard overdue counts, calendar month, reset to system time, and patient workspace rendering. The actual installation remains in system-date mode. The original packaging report below describes its earlier environment and checks.
+
 ## Environment
 
 Operating system: Linux. Python: 3.13.5.

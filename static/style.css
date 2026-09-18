@@ -17,3 +17,12 @@
 .tool-button{min-height:42px}
 .mini-day{min-height:32px}
 .mini-day.label{height:auto;min-height:28px}
+
+/* The application date stays visible at every viewport width. */
+.application-clock{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:12px 24px;background:#edf5f2;border-bottom:1px solid #d5e5dd;color:#315b50}
+.application-clock>div{display:flex;align-items:baseline;flex-wrap:wrap;gap:12px}
+.application-clock strong{font-size:14px}
+.application-clock span{font-size:15px;font-variant-numeric:tabular-nums}
+.application-clock.manual{background:#fff4d9;border-color:#e9d39d;color:#77541c}
+#clock-pending{flex-basis:100%;font-weight:600}
+@media(max-width:650px){.application-clock{padding:10px 14px}.application-clock>div{gap:5px 10px}}

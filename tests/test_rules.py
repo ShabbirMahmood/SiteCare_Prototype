@@ -62,6 +62,27 @@ def test_no_history_candidates_three_in_number_order():
     assert candidates == [1, 2, 3]
 
 
+def test_recovered_site_returns_to_rotation_despite_history():
+    sites = default_sites()
+    last = event(ago=1, n=2, x=sites[1]['x'], y=sites[1]['y'])
+    concern = alert(ago=1, site_number=5, x=0, y=6)
+    assert screen_sites(sites, [last], [concern], [], photo(), NOW)[1] == [3, 4, 6]
+    concern['resolved_at'] = iso(NOW)
+    old_use = event(ago=20, n=5, x=0, y=6, id=2)
+    assert screen_sites(sites, [last, old_use], [concern], [], photo(), NOW)[1] == [3, 4, 5]
+
+
+def test_rotation_wraps_after_site_14():
+    sites = default_sites()
+    last = event(n=14, x=sites[13]['x'], y=sites[13]['y'])
+    assert screen_sites(sites, [last], [], [], photo(), NOW)[1] == [1, 2, 3]
+
+
+def test_void_only_applies_from_its_recorded_time():
+    e = event(ago=1, voided_at=iso(NOW + timedelta(days=1)))
+    assert assess(events=[e])['status'] == 'resting'
+
+
 def test_same_number_locked_even_when_exact_points_far_apart():
     result = assess(events=[event(ago=1, x=0, y=-15)])
     assert result['status'] == 'resting'
