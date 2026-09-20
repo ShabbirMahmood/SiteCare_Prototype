@@ -1,41 +1,8 @@
-Github Link: https://github.com/ShabbirMahmood/SiteCare_Prototype
+SITECARE SETUP
 
-1) Open CMD Terminal in VSCode 
+The maintained setup guide is setup_instruction.md in this folder.
+It covers VS Code Command Prompt setup, environment activation, package installation,
+startup/shutdown, exact login usernames, individual password resets, and Python-based
+port recovery commands.
 
-2) Create the Application’s Python environment
-    py -3.13 -m venv .venv
-
-3) Active Virtual .venv Environment. For Deactivation: deactivate
-    .venv\Scripts\activate
-
-4) Installing Required Libraries
-    python.exe -m pip install -r requirements.txt
-
-5) Run the Site
-    python.exe run.py
-
-User Name: Admin
-Person Name: Admin
-Pass: adminadminadmin
-
-
-UserName: Nurse A
-User: Nurse A
-Pass: nursenursenurse
-
-
-Reset All Pass
-----------------------
-.\.venv\Scripts\python.exe manage.py reset-password adminadminadmin
-
-Turf Off Server
-------------------------
-
-
-
-
-
-    *** Check All Installed Python Version 
-        python --version
-        py -0p
-        
+Start with README.md for the project overview or user_manual.md for English/Japanese help.

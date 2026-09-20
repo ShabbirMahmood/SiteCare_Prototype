@@ -17,8 +17,10 @@ Keep the server window open. Press Ctrl+C in that window to stop.
 Create your administrator account on the first screen. No default password.
 Switch Japanese/English using the language button. Choose "Load demo".
 
-Read README.txt or README.md for complete step-by-step instructions,
-manual alternatives, backup/restore, troubleshooting, and limitations.
+Read README.md for the overview and documentation links.
+Read setup_instruction.md for VS Code/CMD setup, account details and port recovery.
+Read user_manual.md for the short English/Japanese operating guide.
+Read technical_architecture.md for implementation and backup/restore details.
 
 Use fictional data for evaluation. Not clinically validated.
 Windows/macOS setup scripts have not been executed on those operating systems.

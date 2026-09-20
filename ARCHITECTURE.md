@@ -1,5 +1,7 @@
 # SiteCare Architecture
 
+For the current comprehensive reference, including the database model and API/workflow diagrams, see [technical_architecture.md](technical_architecture.md). This file retains the earlier architecture notes.
+
 This document describes the current implementation of SiteCare, version `1.0.0-prototype`, including numbered candidate rotation and the shared demonstration clock.
 
 ## 1. Purpose and runtime
