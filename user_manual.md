@@ -16,19 +16,22 @@ Start SiteCare and open [http://127.0.0.1:8000](http://127.0.0.1:8000/). Sign in
 4. Use **Ruler**: select two ruler marks and enter their actual distance in cm.
 5. Complete **Verify & Save Alignment**. Each new photo needs calibration and verification.
 
+The photo selector counts uploads separately for each patient: **#1 → #2 → #3**. Switching photos displays the saved layout of that image. A high number previously shown by the application was its shared database ID, not the patient’s visit count.
+
 For practice, an administrator can use **Load Demo** or **Settings & Data → Load / Open Demo**. Upload `samples/synthetic_abdomen.jpg` as a new visit photo to practice alignment; its ruler has a 10 cm reference.
 
 ### 3. Edit the numbered layout
 
-Choose **Edit 14 Sites** and drag the circles before any puncture or skin observation has been recorded.
+For **each new photo**, choose **Edit 14 Sites** and drag the circles before recording a puncture or skin observation on that photo. Earlier records for the same patient do not prevent editing the new image. Keep centres at least 5 cm from the navel and 2.5 cm apart.
 
 | Button | Action |
 | --- | --- |
+| **Verify & Save Alignment** — green | Save the ruler calibration and verified photo alignment. |
 | **Save 14-Site Layout** — red | Save the dragged positions. |
 | **Default Layout** — blue | Immediately restore and save all original positions; retain photo-alignment edits. |
 | **Discard Changes** — yellow | Return to the last saved layout and alignment. It does not undo an already saved reset. |
 
-Layout changes and photo alignment are saved separately. Once records reference the layout/photo, the relevant geometry is locked.
+Layout changes and photo alignment are saved separately. All four controls remain visible when a photo is selected. A photo used in a saved record becomes read-only, preserving its layout and alignment. Uploading another photo enables editing again; it starts with the applicable saved layout. Use **Default Layout** if you want the original template instead. **Discard Changes** clears unsaved edits on the selected image.
 
 ### 4. Review and record
 
@@ -40,7 +43,20 @@ Layout changes and photo alignment are saved separately. Once records reference 
 
 Recovery clears that alert immediately. No additional recurring-episode review is required. Other active alerts, rest, spacing, and photo checks can still exclude the site. Eligible sites rejoin the numbered candidate order immediately.
 
-### 5. Dates, appointments, and administration
+### 5. Keep Calibration — administrator
+
+Use **Keep Calibration** immediately to the right of **Change Date** at the top of the page. The setting is shared by all patients and users and is remembered after restarting SiteCare.
+
+- **Unchecked (default):** a photo older than 24 hours at the application date cannot be used for new screening/records. Upload a new photo, calibrate with the ruler, and verify alignment. A photo already used for a non-voided procedure also requires a new visit photo in this mode.
+- **Checked:** continue using the latest calibrated and verified photo after 24 hours, including for later procedures. You do not need to upload or recalibrate just because time has passed.
+- **Unchecked again:** the 24-hour limit applies immediately, measured from the original capture time. This does not give the old photo another 24 hours, erase its calibration, or delete records.
+- **Whenever you upload another photo:** calibrate and verify that new image. This option does not transfer calibration from one image to another or unlock an image already used by records.
+
+Example: verify a photo on 20 September, then change the demonstration date to 23 September. With the checkbox off, prepare a new photo. With it on, the saved photo remains available, while rest periods and skin alerts still determine candidate sites. A photo captured after the chosen demonstration time cannot be used as the current photo.
+
+Other open windows pick up the setting automatically. If you have an open form or unsaved edits, finish or discard them and use **Refresh View** before continuing.
+
+### 6. Dates, appointments, and administration
 
 - **Appointments:** review suggested visits and use **Confirm / Change** to confirm a time. The usual suggestion is 72 hours after the latest applicable puncture.
 - **Change Date** (administrator): choose a demonstration date or **Use System Date**, then **Apply Date**. The selected clock is shared across patients and windows and continues running. All workflow dates use JST.
@@ -48,7 +64,7 @@ Recovery clears that alert immediately. No additional recurring-episode review i
 - **Settings & Data → Download Complete Backup** (administrator): save a database-and-photos backup. Patient **CSV** export is not a full backup.
 - Finish saving, sign out if needed, and press **Ctrl+C** in the server terminal to stop. Closing the browser alone does not stop the server.
 
-**If a control is unavailable:** use the latest photo, verify alignment, and resolve the stated restriction. A new-procedure photo must be within 24 hours of the application clock. Upload a new photo when a saved record has locked the old photo's alignment.
+**If a control is unavailable:** use the latest photo, verify alignment, and resolve the stated restriction. When Keep Calibration is off, a new-procedure photo must be within 24 hours of the application clock. Upload a new photo when a saved record has locked the old photo's alignment.
 
 This is a demonstration prototype. Use synthetic/de-identified data; green markers and photo measurements do not establish clinical suitability.
 
@@ -68,19 +84,22 @@ SiteCare を起動し、[http://127.0.0.1:8000](http://127.0.0.1:8000/) を開�
 4. **定規**で写真内の目盛りを2点選び、実際の距離を cm で入力します。
 5. **確認して位置を保存**を選び、確認項目を完了して保存します。新しい写真は毎回、校正と位置確認が必要です。
 
+写真履歴の番号は患者ごとに **#1 → #2 → #3** と追加順に表示されます。写真を切り替えると、その写真に保存された配置が表示されます。以前の大きな番号は全患者共通のデータベースIDで、患者の訪問回数ではありません。
+
 練習用データは、管理者が **デモを読み込む**、または **設定・データ → デモを読み込む・開く** から追加できます。位置合わせの練習には `samples/synthetic_abdomen.jpg` を新しい写真として追加します。図内の定規には 10 cm の基準があります。
 
 ### 3. 14部位の配置変更
 
-穿刺記録・皮膚所見を追加する前に、**14部位調整**を選び、番号の円をドラッグします。
+**新しい写真ごとに**、その写真で穿刺記録・皮膚所見を追加する前なら、**14部位調整**で番号の円をドラッグできます。同じ患者に以前の記録があっても、新しい写真は編集できます。臍から5cm以上、部位の中心間は2.5cm以上を確保します。
 
 | ボタン | 操作 |
 | --- | --- |
+| **確認して位置を保存** — 緑 | 定規の校正と写真の位置確認を保存します。 |
 | **14部位配置を保存** — 赤 | 調整した配置を保存します。 |
 | **標準配置** — 青 | 元の14部位配置に戻して直ちに保存します。写真の位置合わせ編集は保持されます。 |
 | **変更を破棄** — 黄 | 最後に保存した配置と位置合わせに戻します。保存済みのリセットは取り消しません。 |
 
-部位配置と写真の位置合わせは別々に保存します。記録に使用した配置・写真の位置合わせは、該当する編集が固定されます。
+部位配置と写真の位置合わせは別々に保存します。写真を選択中は4つのボタンが表示されます。記録に使用した写真の配置と位置合わせは固定されますが、新しい写真を追加すると再び編集できます。新しい写真は対象となる保存済み配置を引き継ぎます。元の配置から始めたい場合は **標準配置** を使用します。**変更を破棄** は選択中の写真の未保存編集を破棄します。
 
 ### 4. 確認と記録
 
@@ -92,7 +111,20 @@ SiteCare を起動し、[http://127.0.0.1:8000](http://127.0.0.1:8000/) を開�
 
 回復を保存すると、その注意領域による制限は直ちに解除されます。反復所見による追加の再評価待ちはありません。ただし、別の注意領域・休止期間・距離・写真の条件は引き続き適用されます。条件を満たした部位は番号順の候補に直ちに戻ります。
 
-### 5. 日時・予約・管理
+### 5. 校正を保持 — 管理者
+
+画面上部の **日時を変更** の右にある **校正を保持** を使用します。設定は全患者・全ユーザーで共通となり、再起動後も保存されます。
+
+- **オフ（初期設定）：** アプリ日時から撮影後24時間を超えた写真は、新しい確認・記録に使用できません。新しい写真を追加し、定規で校正して位置確認を保存します。取消されていない実施記録に使用済みの写真にも、新しい訪問写真が必要です。
+- **オン：** 最新の校正・位置確認済み写真を、24時間後や次回の実施記録にも使用できます。時間が経過したことだけを理由に再撮影・再校正する必要はありません。
+- **再びオフ：** 元の撮影日時から計算する24時間の制限が直ちに適用されます。有効期限が24時間延長されるわけではありません。校正や過去の記録は削除されません。
+- **新しい写真を追加した場合：** オン・オフにかかわらず、その写真の校正と位置確認が必要です。別の画像に校正をコピーしたり、記録済み写真の固定を解除したりする機能ではありません。
+
+例：9月20日に写真を確認し、デモ日時を9月23日に進めます。オフなら新しい写真を準備し、オンなら保存済み写真を再利用できます。部位の休止期間・皮膚所見などの確認は引き続き適用されます。選択したデモ日時より未来の写真は現在の写真として使用できません。
+
+他の画面にも設定が反映されます。入力中のフォームや未保存の編集がある場合は、保存または破棄した後、**表示を更新**して続けてください。
+
+### 6. 日時・予約・管理
 
 - **予約カレンダー：** 次回予定を確認し、**確認・変更**で予約を確定・変更します。通常の提案日時は、対象となる最後の穿刺から72時間後です。
 - **日時を変更（管理者）：** デモ日時または **システム日時を使用**を選び、**日時を適用**します。日時は全患者・全画面で共通となり、選択後も時計は進みます。業務日時は日本時間で表示します。
@@ -100,6 +132,6 @@ SiteCare を起動し、[http://127.0.0.1:8000](http://127.0.0.1:8000/) を開�
 - **設定・データ → 完全バックアップを取得（管理者）：** データベースと写真をまとめて保存します。患者の **CSV** は完全なバックアップではありません。
 - 保存を終え、必要に応じてログアウトした後、サーバーのターミナルで **Ctrl+C** を押します。ブラウザーを閉じるだけではサーバーは停止しません。
 
-**操作できない場合：** 最新の写真を使用し、位置確認と表示された制限を確認してください。新しい穿刺の記録には、アプリの日時から24時間以内の写真が必要です。記録に使用して固定された写真は、新しい写真を追加して位置合わせします。
+**操作できない場合：** 最新の写真を使用し、位置確認と表示された制限を確認してください。「校正を保持」がオフの場合、新しい穿刺の記録にはアプリの日時から24時間以内の写真が必要です。記録に使用して固定された写真は、新しい写真を追加して位置合わせします。
 
 本アプリはデモ用の試作版です。架空・匿名化データを使用してください。緑色や写真の距離表示は、臨床上の適否を保証しません。

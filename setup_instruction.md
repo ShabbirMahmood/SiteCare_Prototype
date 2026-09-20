@@ -137,3 +137,29 @@ There is no single **Reset All Passwords** command. Repeat the command for each 
 Backups go to `backups/`. Records and photographs are in `data/`; retain that folder when updating the source. If the server uses `--data-dir`, supply the same directory to maintenance commands.
 
 After backend changes, restart the server; after interface changes, refresh with **Ctrl+F5**. See [User Manual](user_manual.md) and [Technical Architecture](technical_architecture.md) for operation and implementation details.
+
+## 10. First-Run Check and Updating This Version
+
+After signing in:
+
+1. Confirm **System Date** shows the expected JST date. The administrator can use **Change Date → Use System Date** to leave a saved demonstration date.
+2. Check **Keep Calibration**, beside Change Date. It is off by default. Turn it on if the demonstration should reuse verified photos beyond 24 hours. It applies to every patient and survives restarts.
+3. Open a patient and inspect **Photo History**. Labels start at **#1** for each patient. An existing patient's next photo continues that patient's sequence.
+4. On a new upload, check **Edit 14 Sites** and the four bottom buttons. Save the layout and verify alignment separately. A previously used photo remains read-only.
+
+For an existing installation, make a complete backup before updating source files. Stop the server, retain its `data/` folder, then restart with the same data location and refresh the browser with **Ctrl+F5**. Startup automatically adds the settings table and copies each patient's existing layout into their older photos. It preserves photograph IDs, files, records and accounts. It does not remove the database or require you to recreate patients.
+
+For a separate demonstration installation, use a different folder and port:
+
+```bat
+python.exe run.py --data-dir data-demo --port 8001
+```
+
+That folder has its own accounts, date, Keep Calibration setting and records. Do not expect accounts from `data/` to exist there automatically. For its maintenance, use the same folder, for example `python.exe manage.py check --data-dir data-demo`.
+
+| Problem | Check |
+| --- | --- |
+| New checkbox or photo numbering does not appear | Stop the old server, run the updated code, and hard-refresh the browser. |
+| Photo suddenly becomes gray after changing the date | With Keep Calibration off, check the capture time against the selected date and the 24-hour limit. |
+| Old photo cannot be edited | It may be linked to a saved record. Add a new visit photo to edit a separate layout. |
+| Another window reports changed settings | Finish/discard its open edits, refresh, and review the updated candidates before saving. |

@@ -38,6 +38,7 @@ flowchart TD
 | `run.py` | Parses launch options, creates the application, starts Uvicorn, and optionally opens a browser. |
 | `manage.py` | Provides backup, database/image integrity checks, and local password reset. |
 | `sitecare/app.py` | Application factory, middleware, API routes, input validation, authorization, and workflow coordination. |
+| `sitecare/settings.py` | Persisted Keep Calibration policy and request-scoped settings context. |
 | `sitecare/clock.py` | Request-scoped application clock, with separate real time for authentication. |
 | `sitecare/rules.py` | Time and coordinate utilities, site eligibility, rest countdowns, and candidate ranking. |
 | `sitecare/storage.py` | SQLite schema, connection handling, transactions, serialization, audit writes, and backups. |
@@ -65,7 +66,7 @@ The workspace renders an SVG photograph and overlay in a patient-relative coordi
 
 The browser redraws countdown-related content every 30 seconds and polls patient state every 60 seconds while visible. It compares patient versions to detect competing edits and uses the server timestamp to compensate for browser-clock differences. Background polls do not refresh the session's idle timeout.
 
-Shared interface state holds the authenticated user, CSRF token, language, and server time. Only the language preference is explicitly persisted in browser local storage. Current typography uses a 16 px base, mostly 16 px buttons/forms/table text, and smaller supporting labels. Overlay annotations use SVG coordinate units rather than CSS pixels.
+Shared interface state holds the authenticated user, CSRF token, language, and server time. Language preference and cross-window date/settings notification signals use browser local storage; clinical records stay on the server. Current typography uses a 16 px base, mostly 16 px buttons/forms/table text, and smaller supporting labels. Overlay annotations use SVG coordinate units rather than CSS pixels.
 
 ## 5. API surface
 
@@ -73,6 +74,7 @@ All routes are declared inside `create_app()` in `sitecare/app.py`. Automatic Op
 
 | Area | Routes |
 | --- | --- |
+| Application settings | `GET/POST /api/settings` (changes require administrator role and revision) |
 | Application clock | `GET/POST /api/clock` (changes require administrator role) |
 | Session | `GET /api/bootstrap`, `POST /api/setup`, `/api/login`, `/api/logout`, `/api/heartbeat` |
 | Patients | `GET/POST /api/patients`, `GET/PATCH/DELETE /api/patients/{patient_id}` |
@@ -104,14 +106,15 @@ erDiagram
 | Table | Stored information |
 | --- | --- |
 | `schema_info` | Database schema version, currently 1. |
+| `app_settings` | Singleton Keep Calibration boolean, default false, and settings revision. |
 | `app_clock` | Singleton persisted UTC offset, selected timestamp, and clock revision; null offset means system time. |
 | `id_sequences` | Monotonic record ID counters, preserving identity across patient deletions. |
 | `pending_photo_deletions` | Committed photo-file deletions awaiting cleanup or restart retry. |
 | `users` | Username, display name, password hash, and `admin` or `nurse` role. |
 | `sessions` | Hashed token, CSRF token, user reference, creation time, and last activity. |
 | `patients` | Unique code, alias, notes, therapy text, initial due date, active/demo flags, and edit version. |
-| `sites` | Fourteen numbered coordinates per patient. |
-| `photos` | Filename, dimensions, capture/upload times, alignment JSON, verification, and alignment lock. |
+| `sites` | Latest saved layout template for each patient; each photo also saves its own copy. |
+| `photos` | Filename, dimensions, capture/upload times, alignment JSON, per-photo `sites_json`, verification, and geometry lock. |
 | `events` | Exact puncture coordinates, assigned number, timestamps, actor, notes, warnings, alignment snapshot, request key, and void metadata. |
 | `complications` | Circular alert geometry, types, severity, timestamps, alignment snapshot, and recovery metadata. |
 | `reviews` | Retained per-site recurrence review records; no longer required to unblock resolved alerts. |
@@ -120,7 +123,7 @@ erDiagram
 
 Photo bytes are stored separately under `data/photos/`; the database stores their generated filenames. Audit patient identifiers are not declared foreign keys. Site numbers in event/alert records are stored values rather than composite foreign-key references to `sites`.
 
-SQLite uses WAL mode, foreign-key enforcement, and a 15-second busy timeout. Write transactions begin with `BEGIN IMMEDIATE` and commit or roll back together. Initialization creates missing tables and rejects unsupported schema versions; there is no incremental migration framework.
+SQLite uses WAL mode, foreign-key enforcement, and a 15-second busy timeout. Write transactions begin with `BEGIN IMMEDIATE` and commit or roll back together. Initialization creates missing tables and rejects unsupported schema versions; startup also adds `photos.sites_json` when missing and fills null snapshots from existing patient layouts. Existing snapshots are preserved. There is no general versioned migration framework.
 
 ## 7. Geometry and screening
 
@@ -139,7 +142,7 @@ Alignment stores navel pixel coordinates (`cx`, `cy`), pixels per centimetre (`p
 | Navel exclusion | Points less than 5 cm from the navel are blocked. |
 | Active skin alert | A point within an unresolved alert circle is blocked. |
 | Photo geometry | A point outside the photo bounds is blocked. |
-| Photo readiness | Screening requires verified ruler calibration and a photograph captured within the last 24 hours. |
+| Photo readiness | Screening requires verified ruler calibration and a non-future photograph. The 24-hour limit applies when Keep Calibration is off. |
 | Repeated observations | History remains available, but repeated episodes do not impose a review hold. |
 
 Status precedence is `blocked`, then `resting`, then `unverified`, then `eligible`. Responses include the contributing reasons and the latest applicable rest-unlock time.
@@ -155,7 +158,7 @@ Candidate selection returns at most three eligible numbered sites, ordered by nu
 1. Validate authorization, patient version, capture time, consent, and uploaded file.
 2. Accept actual JPEG/PNG images under the upload limit, at least 200 pixels per side and no more than 32 megapixels.
 3. Apply EXIF orientation, resize to fit within 2560 x 2560, strip metadata, and write a sanitized JPEG.
-4. Save photo metadata with initially unverified alignment.
+4. Save photo metadata with initially unverified alignment and a copy of the latest applicable photo layout.
 5. Validate ruler calibration and explicit alignment confirmation before marking the photo verified.
 
 ### Record a completed puncture
@@ -176,13 +179,13 @@ sequenceDiagram
     UI->>API: Reload patient workspace
 ```
 
-New-procedure records require the latest current photo and passing checks. A photo cannot receive a second non-voided new-procedure record. Historical mode records already-performed events with an explanation and preserved warnings. It is distinct from passing current-procedure screening.
+New-procedure records require the latest current photo and passing checks. With Keep Calibration off, a photo cannot receive a second non-voided new-procedure record. With it on, the latest verified photo can be reused for later procedures, subject to all point/time checks. Historical mode records already-performed events with an explanation and preserved warnings. It is distinct from passing current-procedure screening.
 
-Saved event and alert records contain alignment snapshots. Referenced photo alignment is locked, and patient layout editing is locked once records exist. Event corrections retain the original entry with void metadata rather than deleting it.
+Saved event and alert records contain alignment snapshots. Referenced photo alignment and its own numbered layout are locked. Each new photo has a separate editable layout, so earlier records do not prevent editing a new image. Event corrections retain the original entry with void metadata rather than deleting it.
 
 ### Default layout and interface labels
 
-`POST /api/patients/{patient_id}/layout` accepts either `sites` for a custom layout or `reset_to_default: true` with the current patient `version`. The reset obtains its coordinates directly from `rules.default_sites()`, validates them through the same path as custom layouts, and applies the same record lock and version checks. The transaction updates all positions and the patient version, and writes `layout.reset_to_default` with before/after coordinates. It does not change photo alignment.
+`POST /api/patients/{patient_id}/layout` accepts either `sites` for a custom layout or `reset_to_default: true` with the current patient `version` and `photo_id`. The reset obtains its coordinates directly from `rules.default_sites()`, validates them through the same path as custom layouts, and applies the same record lock and version checks. The transaction updates the current unlocked photo snapshot, patient layout template and patient version, and writes `layout.reset_to_default` with before/after coordinates. It does not change photo alignment.
 
 The workspace's blue **Default Layout** button saves this reset immediately, reloads the map, clears any selected old point, and retains unsaved photo alignment. Red **Save 14-Site Layout** saves custom positions; yellow **Discard Changes** reloads the last saved layout and alignment.
 
@@ -249,7 +252,7 @@ Responses expose the effective time, mode, and revision in headers. The browser 
 
 Existing records keep their timestamps. When moving backward, events/alerts after the chosen time do not affect current screening; resolutions and voids take effect at their recorded times. The latest applicable photo is selected by capture time. Appointment due dates are derived from the latest applicable puncture without overwriting saved appointment confirmations just to preview another date. Full histories remain available; this is not a versioned reconstruction of every past profile or alignment edit.
 
-Advancing beyond the 24-hour photo limit correctly makes the photo stale. Upload and verify a synthetic visit photo captured at the demonstration time to continue the scenario. Active alerts do not heal just because the clock advances.
+With Keep Calibration off, advancing beyond the 24-hour photo limit makes the photo stale. Upload and verify a synthetic visit photo captured at the demonstration time to continue the scenario. Active alerts do not heal just because the clock advances.
 
 ## 13. Administrator patient deletion
 
@@ -262,3 +265,13 @@ Photo filenames are queued in the same database transaction and removed from the
 Record IDs for patients, photos, events, and complications are allocated using persistent counters to prevent old links or audit identifiers from referring to newly created records. Initialization seeds counters from existing database maxima without changing existing IDs. Demo creation uses the same allocator and handles reloading the primary demo after deletion.
 
 Backup creation holds a database write lock while taking a snapshot and copying its referenced photographs, preventing a concurrent deletion from invalidating a backup in progress. Deletion tests use temporary synthetic databases and cover permissions, confirmation, stale edits, dependent data, file cleanup/retry, rollback, ID reuse, demo reload, and backup coordination.
+
+## 14. Per-Patient Photo Numbers and Keep Calibration
+
+Photo labels represent upload order within a patient, starting at #1. For example, that patient's global photo IDs 3, 8 and 18 display as #1, #2 and #3. Internal IDs remain unchanged for source-photo URLs and records. Switching photos displays their own saved layouts; each fresh upload enables Edit 14 Sites and the four bottom controls.
+
+The administrator's Keep Calibration checkbox is directly beside Change Date and applies to the entire installation. Checked allows the latest verified image to remain usable beyond 24 hours and for later procedures. Unchecked immediately restores the capture-time age limit and the one-procedure-per-photo requirement. Its default is unchecked, and SQLite persists it across restarts. New uploads always require their own calibration, even when it is enabled.
+
+Middleware uses a ContextVar for request-local policy isolation. Settings responses expose the flag and revision through headers. Browser writes carry `X-Settings-Revision`; stale revisions receive HTTP 409. Changes also increment every patient version, create an audit entry, and trigger view refresh through polling and cross-tab notification. Open forms and unsaved drafts are preserved until refreshed. Site rest, geometry, skin alerts and other checks remain in force.
+
+The detailed current reference is [technical_architecture.md](technical_architecture.md). The updated tests in `tests/test_photo_workflow.py` cover per-patient numbering, historical snapshot preservation, source-photo assignment, policy toggling, permissions, restart persistence, installation isolation, concurrency and migration.

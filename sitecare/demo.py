@@ -49,8 +49,8 @@ def seed_demo(db, data_dir: Path, actor: str) -> int:
     alignment = {"cx": 600, "cy": 520, "ppm": 30, "angle": 0,
                  "calibration": {"a": {"x": 180, "y": 800}, "b": {"x": 480, "y": 800}, "length_cm": 10}}
     db.execute("INSERT INTO photos(id,patient_id,filename,width,height,captured_at,uploaded_at,alignment_json,"
-               "verified,verified_at,verified_by,locked,demo) VALUES(?,?,?,1200,1000,?,?,?,1,?,?,1,1)",
-               (photoid, pid, filename, iso(now), iso(now), json.dumps(alignment), iso(now), actor))
+               "verified,verified_at,verified_by,locked,demo,sites_json) VALUES(?,?,?,1200,1000,?,?,?,1,?,?,1,1,?)",
+               (photoid, pid, filename, iso(now), iso(now), json.dumps(alignment), iso(now), actor, json.dumps(sites)))
     for n, ago in [(1, 2), (2, 5), (3, 8), (8, 11)]:
         s = sites[n - 1]
         db.execute("INSERT INTO events(id,patient_id,photo_id,site_number,x,y,occurred_at,recorded_at,actor,note,kind,"

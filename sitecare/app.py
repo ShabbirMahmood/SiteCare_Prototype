@@ -33,6 +33,7 @@ from .rules import (JST, CHANGE_DAYS, PHOTO_VALID_HOURS, assess_point, body_to_i
                     photo_ready, policy_info, relevant_complications, screen_sites,
                     event_applies, alert_active)
 from .security import password_hash, password_matches, token_hash
+from .settings import keep_calibration, read_settings
 from .storage import (audit, create_backup, decode_photo, initialize, one,
                       patient_records, rows, transaction, next_id, cleanup_deleted_photos)
 
@@ -169,13 +170,18 @@ def workspace(db, patient_id: int) -> dict:
     sites, events, alerts, reviews = patient_records(db, patient_id)
     photos = [decode_photo(r) for r in rows(db, "SELECT * FROM photos WHERE patient_id=? ORDER BY id DESC", (patient_id,))]
     current_photo = latest_photo(db, patient_id)
+    if current_photo:
+        sites = current_photo["sites"]
+    for index, photo in enumerate(photos):
+        photo["number"] = len(photos) - index
+        photo["states"], _ = screen_sites(photo["sites"], events, alerts, reviews, photo, now_utc())
     states, candidates = screen_sites(sites, events, alerts, reviews, current_photo, now_utc())
     return {"patient": p, "sites": sites, "events": events, "alerts": alerts, "reviews": reviews,
             "photos": photos, "states": states, "candidates": candidates if p["active"] else [],
             "current_photo_id": current_photo["id"] if current_photo else None,
             "appointment": effective_appointment(db, p),
             "now": iso(now_utc()), "policy": policy_info(),
-            "layout_locked": bool(events or alerts)}
+            "layout_locked": bool(current_photo and current_photo["locked"])}
 
 
 def summaries(db) -> list[dict]:
@@ -183,6 +189,8 @@ def summaries(db) -> list[dict]:
     for p in rows(db, "SELECT * FROM patients ORDER BY active DESC,code COLLATE NOCASE"):
         sites, events, alerts, reviews = patient_records(db, p["id"])
         photo = latest_photo(db, p["id"])
+        if photo:
+            sites = photo["sites"]
         states, candidates = screen_sites(sites, events, alerts, reviews, photo, now_utc())
         appt = effective_appointment(db, p)
         result.append({**p, "appointment": appt, "eligible_count": sum(s["status"] == "eligible" for s in states),
@@ -259,6 +267,10 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
             if revision is not None and revision != str(request.state.clock["revision"]):
                 return JSONResponse({"error": "The application date changed in another window. Refresh before saving.",
                                      "code": "clock_conflict"}, status_code=409)
+            settings_revision = request.headers.get("x-settings-revision")
+            if settings_revision is not None and settings_revision != str(request.state.settings["revision"]):
+                return JSONResponse({"error": "Application settings changed in another window. Refresh before saving.",
+                                     "code": "settings_conflict"}, status_code=409)
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -274,16 +286,21 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
     async def application_clock(request: Request, call_next):
         with transaction(data_dir) as db:
             request.state.clock = read_clock(db)
+            request.state.settings = read_settings(db)
         context = clock_offset.set(request.state.clock["offset_seconds"] or 0)
+        settings_context = keep_calibration.set(request.state.settings["keep_calibration"])
         try:
             response = await call_next(request)
             clock = describe_clock(request.state.clock)
             response.headers["X-SiteCare-Now"] = clock["now"]
             response.headers["X-SiteCare-Clock-Mode"] = clock["mode"]
             response.headers["X-SiteCare-Clock-Revision"] = str(clock["revision"])
+            response.headers["X-SiteCare-Keep-Calibration"] = str(int(request.state.settings["keep_calibration"]))
+            response.headers["X-SiteCare-Settings-Revision"] = str(request.state.settings["revision"])
             return response
         finally:
             clock_offset.reset(context)
+            keep_calibration.reset(settings_context)
 
     def new_session(db, user_id: int | None = None) -> tuple[str, str]:
         token, csrf = secrets.token_urlsafe(40), secrets.token_urlsafe(32)
@@ -308,13 +325,38 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
                 token, csrf = new_session(db)
             data = {"user": request.state.user, "setup_needed": needs_setup, "csrf": csrf,
                     "version": __version__, "now": iso(now_utc()), "policy": policy_info(),
-                    "clock": describe_clock(request.state.clock)}
+                    "clock": describe_clock(request.state.clock), "settings": request.state.settings}
             return session_response(data, token) if token else data
 
     @app.get("/api/clock")
     def get_clock(request: Request):
         require(request)
         return describe_clock(request.state.clock)
+
+    @app.get("/api/settings")
+    def get_settings(request: Request):
+        require(request)
+        return request.state.settings
+
+    @app.post("/api/settings")
+    async def set_settings(request: Request):
+        user = require(request, True)
+        data = await payload(request)
+        enabled = data.get("keep_calibration")
+        if not isinstance(enabled, bool):
+            raise AppError("Keep Calibration must be true or false.")
+        revision = integer(data.get("revision"), "Settings version", 0)
+        with transaction(data_dir, True) as db:
+            before = read_settings(db)
+            if before["revision"] != revision:
+                raise AppError("Application settings changed in another window. Refresh before saving.", 409, "settings_conflict")
+            db.execute("UPDATE app_settings SET keep_calibration=?,revision=revision+1 WHERE id=1", (int(enabled),))
+            db.execute("UPDATE patients SET version=version+1")
+            request.state.settings = read_settings(db)
+            keep_calibration.set(enabled)
+            audit(db, user["display_name"], "settings.changed", "application",
+                  {"before": before, "after": request.state.settings})
+        return request.state.settings
 
     @app.post("/api/clock")
     async def set_clock(request: Request):
@@ -516,12 +558,14 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
         try:
             with transaction(data_dir, True) as db:
                 p = patient(db, patient_id, version)
+                previous = latest_photo(db, patient_id)
+                sites = previous["sites"] if previous else rows(db, "SELECT number,x,y FROM sites WHERE patient_id=? ORDER BY number", (patient_id,))
                 alignment = {"cx": width / 2, "cy": height / 2, "ppm": width / 36,
                              "angle": 0, "calibration": None}
                 path.write_bytes(output.getvalue())
-                photo_id = db.execute("INSERT INTO photos(id,patient_id,filename,width,height,captured_at,uploaded_at,alignment_json) "
-                                      "VALUES(?,?,?,?,?,?,?,?)", (next_id(db, "photos"), patient_id, filename, width, height, captured,
-                                                              iso(now_utc()), json.dumps(alignment))).lastrowid
+                photo_id = db.execute("INSERT INTO photos(id,patient_id,filename,width,height,captured_at,uploaded_at,alignment_json,sites_json) "
+                                      "VALUES(?,?,?,?,?,?,?,?,?)", (next_id(db, "photos"), patient_id, filename, width, height, captured,
+                                                              iso(now_utc()), json.dumps(alignment), json.dumps(sites))).lastrowid
                 bump(db, patient_id)
                 audit(db, user["display_name"], "photo.uploaded", str(photo_id),
                       {"width": width, "height": height, "captured_at": captured}, patient_id)
@@ -608,15 +652,22 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
                     raise AppError(f"Sites {s['number']} and {other['number']} are less than 2.5 cm apart.")
         with transaction(data_dir, True) as db:
             check_version(db, patient_id, data)
-            if db.execute("SELECT 1 FROM events WHERE patient_id=? UNION SELECT 1 FROM complications WHERE patient_id=? LIMIT 1",
-                          (patient_id, patient_id)).fetchone():
-                raise AppError("The numbered layout is frozen after the first puncture or skin record. Align new photographs instead.", 409)
-            old = rows(db, "SELECT number,x,y FROM sites WHERE patient_id=?", (patient_id,))
+            photo = latest_photo(db, patient_id)
+            if "photo_id" in data and (not photo or integer(data["photo_id"], "Photo") != photo["id"]):
+                raise AppError("Edit the latest visit photo's layout. Reload the patient first.", 409)
+            if photo and photo["locked"]:
+                raise AppError("This photo's layout is linked to saved records. Upload a new photo to edit its own layout.", 409)
+            if not photo and db.execute("SELECT 1 FROM photos WHERE patient_id=? LIMIT 1", (patient_id,)).fetchone():
+                raise AppError("Upload a photo at the current application date before editing the layout.", 409)
+            old = photo["sites"] if photo else rows(db, "SELECT number,x,y FROM sites WHERE patient_id=? ORDER BY number", (patient_id,))
             for s in sites:
                 db.execute("UPDATE sites SET x=?,y=? WHERE patient_id=? AND number=?", (s["x"], s["y"], patient_id, s["number"]))
+            if photo:
+                db.execute("UPDATE photos SET sites_json=? WHERE id=?", (json.dumps(sorted(sites, key=lambda s: s["number"])), photo["id"]))
             bump(db, patient_id)
             action = "layout.reset_to_default" if reset_to_default else "layout.updated"
-            audit(db, user["display_name"], action, str(patient_id), {"before": old, "after": sites}, patient_id)
+            audit(db, user["display_name"], action, str(patient_id),
+                  {"before": old, "after": sites, "photo_id": photo["id"] if photo else None}, patient_id)
         return {"ok": True}
 
     @app.post("/api/patients/{patient_id}/screen-point")
@@ -627,8 +678,16 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
         with transaction(data_dir) as db:
             patient(db, patient_id)
             sites, events, alerts, reviews = patient_records(db, patient_id)
+            photo = latest_photo(db, patient_id)
+            if "photo_id" in data:
+                photo = decode_photo(one(db, "SELECT * FROM photos WHERE id=? AND patient_id=?",
+                                         (integer(data["photo_id"], "Photo"), patient_id)))
+                if not photo:
+                    raise AppError("Photo not found for this patient.", 404)
+            if photo:
+                sites = photo["sites"]
             n = nearest_site(point, sites)
-            return assess_point(point, n, events, alerts, reviews, latest_photo(db, patient_id), now_utc())
+            return assess_point(point, n, events, alerts, reviews, photo, now_utc())
 
     @app.post("/api/patients/{patient_id}/events")
     async def record_event(request: Request, patient_id: int):
@@ -662,14 +721,15 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
                 if not p["active"]:
                     raise AppError("This patient is inactive.", 422)
                 if not latest or latest["id"] != photo_id or not photo_ready(photo, now_utc()):
-                    raise AppError("Upload and verify a current photo (captured within 24 hours) for this visit.", 422, "fresh_photo_required")
+                    raise AppError("Use the latest verified photo. When Keep Calibration is off, it must be captured within 24 hours.", 422, "fresh_photo_required")
                 if now_utc() - parse_time(occurred) > timedelta(hours=24):
                     raise AppError("Older entries must use Historical record mode.", 422)
                 if parse_time(occurred) < parse_time(photo["captured_at"]) - timedelta(minutes=5):
                     raise AppError("Procedure time predates this photograph. Use Historical record mode.", 422)
-                if db.execute("SELECT 1 FROM events WHERE photo_id=? AND kind='procedure' AND voided_at IS NULL", (photo_id,)).fetchone():
+                if not keep_calibration.get() and db.execute("SELECT 1 FROM events WHERE photo_id=? AND kind='procedure' AND voided_at IS NULL", (photo_id,)).fetchone():
                     raise AppError("A new procedure is already recorded on this photo. Upload a new visit photograph.", 422, "fresh_photo_required")
             sites, events, alerts, reviews = patient_records(db, patient_id)
+            sites = photo["sites"]
             previous = [e for e in events if event_applies(e, now_utc())]
             if kind == "procedure" and previous and occurred < max(e["occurred_at"] for e in previous):
                 raise AppError("Out-of-order entries must use Historical record mode.", 422)
@@ -742,7 +802,7 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
             x, y = body_to_image(point["x"], point["y"], photo["alignment"])
             if not (0 <= x <= photo["width"] and 0 <= y <= photo["height"]):
                 raise AppError("Place the alert centre on the photograph.")
-            sites = rows(db, "SELECT number,x,y FROM sites WHERE patient_id=?", (patient_id,))
+            sites = photo["sites"]
             n = nearest_site(point, sites)
             aid = db.execute("INSERT INTO complications(id,patient_id,photo_id,site_number,x,y,radius,types_json,severity,observed_at,"
                              "recorded_at,actor,note,alignment_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",

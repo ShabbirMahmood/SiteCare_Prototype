@@ -21,10 +21,10 @@ For an existing installation, activate its environment and run `python.exe run.p
 
 ## Features
 
-- Patient profiles, visit photographs, and an editable 14-site layout with a default reset.
+- Patient profiles, photo numbering from #1 per patient, and a separate editable 14-site layout for each new photo.
 - Manual alignment, ruler calibration, exact-point records, and skin-alert recovery.
 - Up to three candidates in numbered rotation order, rest countdowns, and appointments.
-- Shared demonstration date, English/Japanese interface, and administrator patient deletion.
+- Shared demonstration date, administrator-controlled Keep Calibration, English/Japanese interface, and administrator patient deletion.
 - Local accounts, audit history, patient CSV export, and database/photo backups.
 
 ## Architecture
@@ -32,7 +32,7 @@ For an existing installation, activate its environment and run `python.exe run.p
 ```mermaid
 flowchart LR
     Browser["Browser: HTML / CSS / JavaScript / SVG"] -->|"Local HTTP + JSON"| API["Uvicorn + FastAPI"]
-    API --> Rules["Screening Rules + Application Clock"]
+    API --> Rules["Screening Rules + Clock + Settings"]
     API --> Security["Sessions + Roles + CSRF"]
     API --> Storage["SQLite Storage"]
     Storage --> DB[("data/sitecare.sqlite3")]
@@ -46,7 +46,8 @@ flowchart LR
 flowchart LR
     A["Sign In"] --> B["Create / Open Patient"]
     B --> C["Upload Visit Photo"]
-    C --> D["Align + Calibrate + Verify"]
+    C --> L["Edit / Save This Photo Layout"]
+    L --> D["Align + Calibrate + Verify"]
     D --> E["Review Sites + Exact Point"]
     E --> F["Record Completed Puncture"]
     F --> G["Rest Countdown + Next Visit"]
@@ -54,6 +55,32 @@ flowchart LR
     H --> I["Confirm Recovery"]
     I --> E
 ```
+
+## Photos and Calibration
+
+Photo labels are local to each patient: patient A has **#1, #2, #3**, and patient B starts again at **#1**. They represent upload order, including existing photos. Internal database IDs stay unchanged so records continue to link to the correct image.
+
+On every new photo, **Edit 14 Sites** and the four bottom controls are available: **Verify & Save Alignment**, **Discard Changes** (yellow), **Save 14-Site Layout** (red), and **Default Layout** (blue). Once a record uses that photo, its layout and alignment become read-only. A later upload gets its own editable copy; earlier images and records retain their saved geometry.
+
+The administrator's **Keep Calibration** checkbox sits immediately beside **Change Date**:
+
+| Setting | Behavior |
+| --- | --- |
+| Unchecked — default | The current photo must be within 24 hours of the application clock. A new procedure also needs a photo without an existing non-voided procedure record. |
+| Checked | Reuse the latest verified photo beyond 24 hours and for later procedures. Its saved layout/alignment stay protected. |
+| New photo uploaded | Calibrate and verify this new image in either mode. Calibration is never copied between different images. |
+
+The setting applies to all patients, is saved across restarts, and takes effect when changed. Site rest, exact-point spacing, skin alerts and all other record checks still apply. **Change Date** affects photo age as well as countdowns and appointments.
+
+## Everyday Operation
+
+1. Sign in and open the existing patient profile for each visit.
+2. Upload and prepare a new photo, or use an existing verified photo when Keep Calibration is enabled.
+3. Review the three candidate suggestions and the exact point before documenting a completed procedure.
+4. Record skin observations and explicitly confirm recovery when appropriate. Recovery returns an otherwise eligible site to its numbered candidate position immediately.
+5. Save changes before closing. Stop the Python server in its terminal with **Ctrl+C**.
+
+Back up through **Settings & Data → Download Complete Backup** or `python.exe manage.py backup`. Keep the complete `data/` folder when updating the application. Restart the server and press **Ctrl+F5** after installing source changes.
 
 ## Guides
 

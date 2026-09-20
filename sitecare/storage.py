@@ -17,6 +17,10 @@ CREATE TABLE IF NOT EXISTS app_clock(
  id INTEGER PRIMARY KEY CHECK(id=1), offset_seconds REAL, selected_at TEXT,
  revision INTEGER NOT NULL DEFAULT 0);
 INSERT OR IGNORE INTO app_clock(id) VALUES(1);
+CREATE TABLE IF NOT EXISTS app_settings(
+ id INTEGER PRIMARY KEY CHECK(id=1), keep_calibration INTEGER NOT NULL DEFAULT 0
+ CHECK(keep_calibration IN (0,1)), revision INTEGER NOT NULL DEFAULT 0);
+INSERT OR IGNORE INTO app_settings(id) VALUES(1);
 CREATE TABLE IF NOT EXISTS id_sequences(name TEXT PRIMARY KEY, last_id INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS pending_photo_deletions(filename TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS users(
@@ -35,7 +39,7 @@ CREATE TABLE IF NOT EXISTS sites(
 CREATE TABLE IF NOT EXISTS photos(
  id INTEGER PRIMARY KEY, patient_id INTEGER NOT NULL REFERENCES patients(id), filename TEXT UNIQUE NOT NULL,
  width INTEGER NOT NULL, height INTEGER NOT NULL, captured_at TEXT NOT NULL, uploaded_at TEXT NOT NULL,
- alignment_json TEXT NOT NULL, verified INTEGER NOT NULL DEFAULT 0,
+ alignment_json TEXT NOT NULL, sites_json TEXT, verified INTEGER NOT NULL DEFAULT 0,
  verified_at TEXT, verified_by TEXT, locked INTEGER NOT NULL DEFAULT 0, demo INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS events(
  id INTEGER PRIMARY KEY, patient_id INTEGER NOT NULL REFERENCES patients(id),
@@ -83,6 +87,13 @@ def initialize(data_dir: Path) -> None:
         db.executescript(SCHEMA)
         if db.execute("SELECT version FROM schema_info").fetchone()[0] != 1:
             raise RuntimeError("Unsupported database version. Preserve your data and contact the developer.")
+        # Earlier installations had one immutable layout per patient. Preserve it
+        # on every existing photo before allowing edits on later visit photos.
+        if "sites_json" not in {r[1] for r in db.execute("PRAGMA table_info(photos)")}:
+            db.execute("ALTER TABLE photos ADD COLUMN sites_json TEXT")
+        for photo in db.execute("SELECT id,patient_id FROM photos WHERE sites_json IS NULL").fetchall():
+            sites = rows(db, "SELECT number,x,y FROM sites WHERE patient_id=? ORDER BY number", (photo["patient_id"],))
+            db.execute("UPDATE photos SET sites_json=? WHERE id=?", (json.dumps(sites), photo["id"]))
         # Preserve ID high-water marks before any deletion, including older databases.
         for table in ("patients", "photos", "events", "complications"):
             highest = db.execute(f"SELECT COALESCE(MAX(id),0) FROM {table}").fetchone()[0]
@@ -156,6 +167,7 @@ def decode_photo(photo: dict | None) -> dict | None:
     if photo:
         photo = dict(photo)
         photo["alignment"] = json.loads(photo.pop("alignment_json"))
+        photo["sites"] = json.loads(photo.pop("sites_json", None) or "[]")
         photo["url"] = f"/api/photos/{photo['id']}/image"
         photo.pop("filename", None)
     return photo

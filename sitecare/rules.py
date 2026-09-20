@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from math import cos, sin, pi, hypot
 from typing import Any
 from .clock import now_utc
+from .settings import keep_calibration
 
 UTC = timezone.utc
 JST = timezone(timedelta(hours=9), "JST")
@@ -82,7 +83,7 @@ def photo_ready(photo: dict | None, as_of: datetime, *, freshness: bool = True) 
         return False
     if freshness:
         age = as_of - parse_time(photo["captured_at"])
-        return timedelta(0) <= age <= timedelta(hours=PHOTO_VALID_HOURS)
+        return age >= timedelta(0) and (keep_calibration.get() or age <= timedelta(hours=PHOTO_VALID_HOURS))
     return True
 
 
@@ -177,5 +178,5 @@ def alert_active(alert: dict, as_of: datetime) -> bool:
 def policy_info() -> dict:
     return {"rest_days": REST_DAYS, "change_days": CHANGE_DAYS,
             "minimum_spacing_cm": MIN_SPACING_CM, "navel_radius_cm": NAVEL_RADIUS_CM,
-            "photo_valid_hours": PHOTO_VALID_HOURS, "recurrence_days": RECURRENCE_DAYS,
+            "photo_valid_hours": PHOTO_VALID_HOURS, "keep_calibration": keep_calibration.get(), "recurrence_days": RECURRENCE_DAYS,
             "recurrence_count": RECURRENCE_COUNT, "timezone": "Asia/Tokyo (UTC+09:00)"}

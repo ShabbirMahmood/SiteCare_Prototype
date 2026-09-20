@@ -1,5 +1,21 @@
 # Packaging verification report
 
+## Photo History and Keep Calibration Verification — 2026-09-20
+
+The full Windows suite completed with **112 passed**, with one existing Starlette/AnyIO deprecation warning. JavaScript syntax checks passed for all four modules. Nine new synthetic test cases cover:
+
+- Separate #1/#2/#3 photo numbering across interleaved patients and application restart.
+- Editing/resetting a new photo after a prior puncture or skin record, while preserving older layouts, alignment and records.
+- Historical assignment using the source photo's layout and selection of the appropriate layout when moving the demonstration date.
+- Enabling reuse of a verified photo beyond 24 hours, including another procedure, and immediate restoration of the age limit when disabled.
+- Continued rest/skin restrictions, required calibration of new uploads, and rejection of future current photos.
+- Administrator/CSRF checks, strict boolean validation, stale revisions and patient versions, audit entries, restart persistence and isolation between installations.
+- Additive upgrade of an earlier schema, preserved history and non-overwriting layout backfill on repeated initialization.
+
+A separate temporary installation on port 8001 was checked in the browser with synthetic images. Patient A displayed #1 and #2 despite an intervening upload for patient B, which displayed #1. The new photo had Edit 14 Sites and all four bottom controls enabled. Default Layout saved successfully; the earlier recorded photo kept read-only geometry and visible disabled edit controls. Computed control colors remained green, yellow, red and blue.
+
+Keep Calibration appeared to the right of Change Date, unchecked by default. Checking it immediately restored candidate eligibility for a three-day-old verified photo; unchecking immediately restored the stale-photo message and removed those candidates. Japanese labels and the same behavior were checked, and no browser console warnings/errors were reported. The temporary preview was closed afterward. These checks did not use or change the user's patient records.
+
 ## Layout controls and interface verification — 2026-09-20
 
 The full Windows test suite completed with **103 passed**, with the existing Starlette/AnyIO deprecation warning. JavaScript syntax checks passed. Added API coverage verifies restoration of every default coordinate, unchanged photos/alignment and candidate results, before/after audit details, stale-version rejection, both puncture and skin-record locks, and ambiguous reset payload rejection.

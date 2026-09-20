@@ -24,6 +24,10 @@
 .application-clock strong{font-size:14px}
 .application-clock span{font-size:15px;font-variant-numeric:tabular-nums}
 .application-clock.manual{background:#fff4d9;border-color:#e9d39d;color:#77541c}
+.application-clock .clock-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.keep-calibration-control{display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-weight:600}
+.keep-calibration-control input{width:18px;height:18px;accent-color:var(--brand);cursor:pointer}
+.application-clock .calibration-policy{flex-basis:100%;font-size:13px}
 #clock-pending{flex-basis:100%;font-weight:600}
 .patient-delete-section{border-top:1px solid #efd1ce;margin-top:24px;padding-top:20px}
 .patient-delete-section h3{color:#a24440;margin-bottom:8px}

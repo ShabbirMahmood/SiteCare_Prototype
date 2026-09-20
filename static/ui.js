@@ -1,4 +1,4 @@
-export const state = { user: null, csrf: '', lang: localStorage.getItem('sitecare-language') || 'ja', now: null, clock: null, clockAnchor: null };
+export const state = { user: null, csrf: '', lang: localStorage.getItem('sitecare-language') || 'ja', now: null, clock: null, clockAnchor: null, settings: null };
 export const appNow = () => state.clockAnchor ? state.clockAnchor.now + performance.now() - state.clockAnchor.received : Date.now();
 export function syncClock(response) {
   const now = Date.parse(response.headers.get('X-SiteCare-Now'));
@@ -9,6 +9,15 @@ export function syncClock(response) {
   state.clockAnchor = {now, received: performance.now()};
   state.now = new Date(now).toISOString();
   if (changed) window.dispatchEvent(new Event('clockchanged'));
+}
+export function syncSettings(response) {
+  const raw = response.headers.get('X-SiteCare-Settings-Revision');
+  if (raw === null) return;
+  const revision = Number(raw);
+  if (!Number.isFinite(revision) || (state.settings && revision < state.settings.revision)) return;
+  const changed = state.settings && state.settings.revision !== revision;
+  state.settings = {keep_calibration: response.headers.get('X-SiteCare-Keep-Calibration') === '1', revision};
+  if (changed) window.dispatchEvent(new Event('settingschanged'));
 }
 export const t = (en, ja) => state.lang === 'ja' ? (ja || en) : en;
 export const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -69,11 +78,13 @@ export async function api(path, {method = 'GET', data, form, activity = true} = 
   const headers = {'X-User-Activity': activity ? '1' : '0'};
   if (method !== 'GET') headers['X-CSRF-Token'] = state.csrf;
   if (method !== 'GET' && state.clock) headers['X-Clock-Revision'] = $('#dialog[open] form')?.dataset.clockRevision ?? String(state.clock.revision);
+  if (method !== 'GET' && state.settings) headers['X-Settings-Revision'] = $('#dialog[open] form')?.dataset.settingsRevision ?? String(state.settings.revision);
   if (data !== undefined) headers['Content-Type'] = 'application/json';
   let response;
   try { response = await fetch(path, {method, headers, body: form || (data !== undefined ? JSON.stringify(data) : undefined), credentials: 'same-origin', cache: 'no-store'}); }
   catch { throw new Error(t('The local server is unavailable. Keep the SiteCare terminal open and retry.', 'ローカルサーバーに接続できません。SiteCare の起動ウィンドウを確認してください。')); }
   syncClock(response);
+  syncSettings(response);
   const result = await response.json().catch(() => ({error: t('The server could not complete this request.', '処理に失敗しました。')}));
   if (!response.ok) {
     if (response.status === 401 && !path.includes('/login')) window.dispatchEvent(new Event('authlost'));
@@ -95,6 +106,7 @@ export function openDialog({title, body, submit = t('Save','保存'), onSubmit, 
   $$('.close-dialog', dialog).forEach(b => b.addEventListener('click', () => dialog.close()));
   const form = $('form', dialog);
   if (state.clock) form.dataset.clockRevision = String(state.clock.revision);
+  if (state.settings) form.dataset.settingsRevision = String(state.settings.revision);
   form.addEventListener('submit', async event => {
     event.preventDefault(); if (!onSubmit) return;
     const button = $('button[type=submit]', form), error = $('.form-error', form);
@@ -123,7 +135,7 @@ export function reasonLabel(reason) {
     case 'recurrence_review': return t(`${reason.count} related episodes in 90 days. Review required.`, `90日以内に関連する皮膚所見 ${reason.count} 件。再評価が必要です。`);
     case 'navel': return t(`Only ${reason.distance_cm} cm from the navel; minimum 5 cm.`, `臍から ${reason.distance_cm} cm（5 cm以上必要）。`);
     case 'outside_photo': return t('This point is outside the photograph.', '写真の範囲外です。');
-    case 'photo_unverified': return t('A current calibrated and verified photograph is required.', '24時間以内に撮影した写真の校正と位置確認が必要です。');
+    case 'photo_unverified': return t('A current calibrated and verified photograph is required.', '現在の写真の校正と位置確認が必要です。');
     default: return reason.code;
   }
 }

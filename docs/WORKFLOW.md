@@ -8,7 +8,7 @@ Create a patient with a unique ID, minimal display label, therapy/protocol label
 
 Open the patient and upload a JPEG/PNG abdominal photograph. The uploader requires a capture date/time and confirmation of authorized image use. Actual patient photographs are not included in the distribution.
 
-The initial 14 positions reproduce the numbering arrangement of the supplied rotation diagram, not physical dimensions taken from the printed page. The patient's site layout can be adjusted before historical records are attached. Once records exist, the layout is locked to avoid changing the meaning of historical site numbers.
+The initial 14 positions reproduce the numbering arrangement of the supplied rotation diagram, not physical dimensions taken from the printed page. Each new photo has its own editable layout. Saving a puncture or skin observation locks only that photo’s layout and alignment. Later uploads can be edited without changing older photos or records. Photo History numbers uploads from #1 separately for each patient.
 
 ### Editing or restoring the 14-site layout
 
@@ -18,7 +18,7 @@ With an editable photo open, choose **Edit 14 Sites** and drag the numbered circ
 - **Default Layout** (blue): immediately restore and save all 14 original positions. No additional Save click is needed. Photo alignment and its unsaved adjustments are kept.
 - **Discard Changes** (yellow): restore the last saved layout and photo alignment, discarding unsaved edits. This does not undo a layout already saved by either of the other buttons.
 
-Default Layout uses the same original coordinates as a newly created patient, records the change in the audit trail, and refreshes the map. These actions remain available only before a puncture or skin observation locks the layout. **Verify & Save Alignment** continues to save photo alignment separately.
+Default Layout uses the same original coordinates as a newly created patient, records the change in the audit trail, and refreshes the map. All four bottom controls stay visible. Editing is enabled for each new photo until a puncture or skin observation uses that photo; earlier records do not lock the new image. **Verify & Save Alignment** continues to save photo alignment separately.
 
 ## Photo alignment and calibration
 
@@ -68,17 +68,29 @@ Finish saving, check the patient's history, sign out, and stop the local server 
 
 ## Demonstration date and candidate order
 
-The date bar at the top of every signed-in page shows the current application time in JST. Administrators can select **Change date**, choose **Choose demonstration date**, enter a date and time, then **Apply date**. Time continues advancing from that point. Select **Use system date** in the same dialog to return to real time. The choice applies to all patients/windows and persists after restart.
+The date bar at the top of every signed-in page shows the current application time in JST. Administrators can select **Change Date**, choose **Choose Demonstration Date**, enter a date and time, then **Apply Date**. Time continues advancing from that point. Select **Use System Date** in the same dialog to return to real time. The choice applies to all patients/windows and persists after restart.
 
-Countdowns, candidates, photo freshness, appointment due/overdue calculations, calendars, and new-entry defaults all follow this clock. Existing saved timestamps are retained. A photo older than 24 hours at the selected time requires a new calibrated visit photo.
+Countdowns, candidates, photo freshness, appointment due/overdue calculations, calendars, and new-entry defaults all follow this clock. Existing saved timestamps are retained. With Keep Calibration off, a photo older than 24 hours at the selected time requires a new calibrated visit photo.
 
 Candidates follow numbered rotation after the most recent applicable puncture, skipping currently unavailable sites. A recovered site returns to its numbered position immediately: 3, 4, 6 becomes 3, 4, 5 when site 5 becomes eligible. Past resolved alerts do not reduce its priority.
+
+## Reuse calibration across demonstration visits
+
+Administrators can select **Keep Calibration** to the right of **Change Date**. It is off by default and is shared across patients and users. The choice is saved in the database and included in complete backups.
+
+1. Calibrate and verify a photo normally.
+2. Enable **Keep Calibration** before advancing to a later demonstration date.
+3. Reopen or refresh the patient. The latest verified photo can still be used, including for a later completed-procedure record. Its saved geometry stays locked if it already has records.
+4. Review candidates again: rest, spacing, active skin alerts and other conditions still apply.
+5. Uncheck the option to restore the 24-hour capture-time limit immediately. It does not restart the photo's 24-hour period or erase previous calibration/records.
+
+Every newly uploaded image needs its own calibration and verification in either mode. With the option off, another procedure also needs a photo without an existing non-voided procedure record. Future photographs cannot become the current photo before their capture time. Other open windows refresh automatically unless a form or unsaved edit needs attention first.
 
 ## Delete a patient (administrator only)
 
 1. Open the patient workspace and select **Profile**.
-2. Select **Delete patient…** at the bottom of the dialog.
+2. Select **Delete Patient…** at the bottom of the dialog.
 3. Check the patient name/ID and record counts, then type the exact patient ID.
-4. Optionally enter a reason and select **Delete permanently**.
+4. Optionally enter a reason and select **Delete Permanently**.
 
 This removes the profile, photos, puncture history, skin observations, reviews, layout, and appointment, then returns to the patient list. Audit records and existing backup archives remain. Deletion cannot be undone in the app. If a photo file is locked, the app reports that cleanup is pending and retries it when SiteCare restarts.

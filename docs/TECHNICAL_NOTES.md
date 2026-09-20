@@ -20,7 +20,7 @@ The normal launcher binds only to 127.0.0.1. There is deliberately no host optio
 
 The internal patient-relative two-dimensional plane uses centimetres, with navel=(0, 0), positive x toward image right/patient left, and positive y toward the feet. Alignment uses a navel location, one scale derived from a ruler, and rotation. This is a similarity transform, not anatomical image registration or a three-dimensional body-surface model.
 
-The initial layout uses eight inner and six outer points. Its numbering is based on the supplied diagram, but its initial geometry is a prototype template. Save any patient-specific layout adjustments before adding clinical records. Layout/alignment locks preserve record interpretation afterward.
+The initial layout uses eight inner and six outer points. Its numbering is based on the supplied diagram, but its initial geometry is a prototype template. Save layout adjustments for each new photo before adding records on that photo. Per-photo layout/alignment locks preserve earlier records while allowing later images to be edited. `sites_json` stores the photo snapshot; `sites` retains the latest patient template.
 
 Dates are stored as timezone-aware UTC timestamps and displayed/entered in Japan Standard Time. Rest is 12 x 24 hours from the recorded puncture time; it is not based on calendar midnights. Appointments use 3 x 24 hours from the latest non-voided recorded puncture, or the initial due date when no puncture exists.
 
@@ -28,7 +28,7 @@ Dates are stored as timezone-aware UTC timestamps and displayed/entered in Japan
 
 The supplied project brief is the source for a 12-day reuse restriction, 3-day procedure interval, at least 2.5 cm from punctures in the preceding 12 days, and at least 5 cm from the navel. This package does not independently establish their medical applicability. Confirm the actual medicine, device, approved protocol, and which event starts each clock.
 
-The prototype conservatively restricts the whole assigned numbered site after use, in addition to exact-point spacing checks. Active complication circles remain blocking until recovery is recorded. Related observations over 90 days are retained as informational history, without a recurrence-review hold. The 24-hour latest-photo limit for new-procedure screening remains a prototype engineering setting.
+The prototype conservatively restricts the whole assigned numbered site after use, in addition to exact-point spacing checks. Active complication circles remain blocking until recovery is recorded. Related observations over 90 days are retained as informational history, without a recurrence-review hold. The 24-hour latest-photo limit is the default engineering setting. The administrator can enable Keep Calibration to reuse the latest verified image beyond 24 hours and across later procedures. New images still need calibration, and all non-photo-age screening checks remain in force.
 
 The deterministic suggestion engine returns at most three rule-eligible numbered positions. It is not a model of tissue condition, wound recovery, drug absorption, or clinical risk. There is no automated diagnosis or image-based complication recognition.
 
@@ -59,3 +59,11 @@ The normal setup does not require any advanced flags. Do not modify rule constan
 ## Not implemented / not certified
 
 This package does not provide automated physical distance verification, automatic anatomical tracking across photographs, contour deformation, autonomous site selection, freehand alert polygons, medication dosing, outbound reminder messages, hospital-record integration, or validated clinical decision support. Multi-computer deployment, real-world clinical usability, and Windows/macOS installation have not been validated in the packaging environment.
+
+## Photo identity, migration and shared settings
+
+The photo selector exposes upload ordinals beginning at #1 for each patient. It does not change globally unique photo IDs used by the API, event references and files. Historical photo selection uses the saved layout of that photo. Exact-point assignments use the source image's layout rather than a later image's positions.
+
+Existing databases are upgraded additively at startup: create `app_settings`, add `photos.sites_json` if absent, and fill missing snapshots from that patient's existing layout. Repeating initialization preserves populated snapshots. Keep Calibration defaults to false; its boolean value and revision persist in SQLite and travel with database backups.
+
+Settings changes require admin authorization, CSRF and a matching revision. They update patient versions and audit history. Response headers distribute the current policy to browser windows, and `X-Settings-Revision` prevents saves from stale forms. Polling and cross-tab signals refresh idle screens while preserving unsaved drafts. For implementation and test details, see [Technical Architecture](../technical_architecture.md).
