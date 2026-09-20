@@ -587,7 +587,12 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
     async def edit_layout(request: Request, patient_id: int):
         user = require(request)
         data = await payload(request)
-        incoming = data.get("sites")
+        reset_to_default = data.get("reset_to_default", False)
+        if not isinstance(reset_to_default, bool):
+            raise AppError("Default layout selection must be true or false.")
+        if reset_to_default and "sites" in data:
+            raise AppError("Choose a default reset or custom sites, not both.")
+        incoming = default_sites() if reset_to_default else data.get("sites")
         if not isinstance(incoming, list) or len(incoming) != 14:
             raise AppError("Exactly 14 numbered sites are required.")
         sites = [{"number": integer(s.get("number"), "Site number", 1, 14),
@@ -610,7 +615,8 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
             for s in sites:
                 db.execute("UPDATE sites SET x=?,y=? WHERE patient_id=? AND number=?", (s["x"], s["y"], patient_id, s["number"]))
             bump(db, patient_id)
-            audit(db, user["display_name"], "layout.updated", str(patient_id), {"before": old, "after": sites}, patient_id)
+            action = "layout.reset_to_default" if reset_to_default else "layout.updated"
+            audit(db, user["display_name"], action, str(patient_id), {"before": old, "after": sites}, patient_id)
         return {"ok": True}
 
     @app.post("/api/patients/{patient_id}/screen-point")

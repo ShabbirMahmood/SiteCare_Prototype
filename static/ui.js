@@ -24,7 +24,7 @@ export const shortTime = value => value ? new Intl.DateTimeFormat('ja-JP', {time
 export function countdown(until, now = appNow()) {
   if (!until) return '—';
   const mins = Math.max(0, Math.ceil((new Date(until).getTime() - new Date(now).getTime()) / 60000));
-  if (!mins) return t('Rest period complete', '休止期間終了');
+  if (!mins) return t('Rest Period Complete', '休止期間終了');
   const days = Math.floor(mins / 1440), hours = Math.floor(mins % 1440 / 60), minutes = mins % 60;
   return days ? `${days}${t('d','日')} ${hours}${t('h','時間')}` : `${hours}${t('h','時間')} ${minutes}${t('m','分')}`;
 }
@@ -108,10 +108,12 @@ export function openDialog({title, body, submit = t('Save','保存'), onSubmit, 
   return dialog;
 }
 export const typeLabel = type => ({
-  redness: t('Redness','発赤'), hardness:t('Hardening','硬結'), pain:t('Pain / tenderness','痛み・圧痛'),
-  swelling:t('Swelling','腫脹'), bruising:t('Bruising','皮下出血'), leakage:t('Leakage','液漏れ'), other:t('Other / avoid area','その他・使用禁止部位')
+  redness: t('Redness','発赤'), hardness:t('Hardening','硬結'), pain:t('Pain / Tenderness','痛み・圧痛'),
+  swelling:t('Swelling','腫脹'), bruising:t('Bruising','皮下出血'), leakage:t('Leakage','液漏れ'), other:t('Other / Avoid Area','その他・使用禁止部位')
 })[type] || type;
-export const statusLabel = value => ({eligible:t('Rule-eligible','条件適合'),resting:t('Resting','休止中'),blocked:t('Do not use','使用不可'),unverified:t('Verify photo','写真確認待ち')})[value] || value;
+export const roleLabel = role => ({admin:t('Administrator','管理者'),nurse:t('Nurse','看護師')})[role] || role;
+export const severityLabel = severity => ({mild:t('Mild','軽度'),moderate:t('Moderate','中等度'),severe:t('Severe','重度')})[severity] || severity;
+export const statusLabel = value => ({eligible:t('Rule-Eligible','条件適合'),resting:t('Resting','休止中'),blocked:t('Do Not Use','使用不可'),unverified:t('Verify Photo','写真確認待ち')})[value] || value;
 export const badge = (value, label = '') => `<span class="badge ${value}"><span class="status-dot"></span>${label || statusLabel(value)}</span>`;
 export function reasonLabel(reason) {
   switch(reason.code) {

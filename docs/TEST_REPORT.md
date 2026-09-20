@@ -1,5 +1,11 @@
 # Packaging verification report
 
+## Layout controls and interface verification — 2026-09-20
+
+The full Windows test suite completed with **103 passed**, with the existing Starlette/AnyIO deprecation warning. JavaScript syntax checks passed. Added API coverage verifies restoration of every default coordinate, unchanged photos/alignment and candidate results, before/after audit details, stale-version rejection, both puncture and skin-record locks, and ambiguous reset payload rejection.
+
+A disposable local installation was checked in the browser. Dragging and saving a site worked; Default Layout immediately restored and saved the default coordinates. Unsaved photo rotation survived the reset and Discard Changes restored the saved alignment. Computed button backgrounds were red, blue and yellow, and desktop overlay labels were 12px. English navigation, headings, buttons, options and statuses use title capitalization; patient-entered text retains its original case.
+
 ## Administrator deletion verification — 2026-09-18
 
 The full Windows test suite now completes with **98 passed**, with the same dependency deprecation warning. JavaScript syntax checking passed. New synthetic tests verify deletion of empty/populated profiles, dependent records and photos, preservation of other patients and audit history, permission/CSRF checks, typed confirmation, stale versions, transaction rollback, locked-file cleanup retry, permanent record IDs, demo reload, and backup/deletion coordination.

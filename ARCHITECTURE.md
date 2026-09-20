@@ -178,6 +178,14 @@ New-procedure records require the latest current photo and passing checks. A pho
 
 Saved event and alert records contain alignment snapshots. Referenced photo alignment is locked, and patient layout editing is locked once records exist. Event corrections retain the original entry with void metadata rather than deleting it.
 
+### Default layout and interface labels
+
+`POST /api/patients/{patient_id}/layout` accepts either `sites` for a custom layout or `reset_to_default: true` with the current patient `version`. The reset obtains its coordinates directly from `rules.default_sites()`, validates them through the same path as custom layouts, and applies the same record lock and version checks. The transaction updates all positions and the patient version, and writes `layout.reset_to_default` with before/after coordinates. It does not change photo alignment.
+
+The workspace's blue **Default Layout** button saves this reset immediately, reloads the map, clears any selected old point, and retains unsaved photo alignment. Red **Save 14-Site Layout** saves custom positions; yellow **Discard Changes** reloads the last saved layout and alignment.
+
+English interface labels use a capital initial for each word, including words joined by hyphens. Keep this convention for new buttons, options, headings, tabs, statuses, field labels and accessible names. Write these labels explicitly in the translation source so screen readers receive the same wording; do not apply case conversion to patient-entered data or stored values. Preserve acronyms such as ID, CSV and JST and measurement symbols such as cm and px. Japanese translations and explanatory prose retain their usual casing. Map notice labels use 12px text (11px at the small-screen breakpoint).
+
 ### Recovery and appointments
 
 Alert resolution records explicit recovery confirmation, an assessment note, actor, and timestamp, then increments the patient version and writes an audit entry. The next workspace response recalculates eligibility without a recurrence hold.

@@ -213,6 +213,61 @@ def test_layout_validation_and_customization(client, patient_id):
     assert state(client, patient_id)['sites'][0]['y'] == -7
 
 
+def test_default_layout_restores_all_sites_and_preserves_photo(client, patient_id, photo_id):
+    original = state(client, patient_id)
+    custom = default_sites()
+    for site in custom:
+        site['x'] *= 1.1
+        site['y'] *= 1.1
+    endpoint = f'/api/patients/{patient_id}/layout'
+    assert client.post(endpoint, json={'version': original['patient']['version'],
+                                      'sites': custom}).status_code == 200
+    customized = state(client, patient_id)
+    assert customized['sites'][0]['y'] != original['sites'][0]['y']
+    response = client.post(endpoint, json={'version': customized['patient']['version'],
+                                          'reset_to_default': True})
+    assert response.status_code == 200, response.text
+    restored = state(client, patient_id)
+    assert [{key: site[key] for key in ('number', 'x', 'y')} for site in restored['sites']] == default_sites()
+    assert restored['patient']['version'] == customized['patient']['version'] + 1
+    assert restored['photos'] == original['photos']
+    assert restored['candidates'] == original['candidates']
+    entry = next(item for item in client.get('/api/audit').json()['items']
+                 if item['action'] == 'layout.reset_to_default')
+    assert entry['patient_id'] == patient_id
+    assert entry['detail']['before'] == custom
+    assert entry['detail']['after'] == default_sites()
+    # A stale second window cannot reset a newer layout.
+    assert client.post(endpoint, json={'version': customized['patient']['version'],
+                                      'reset_to_default': True}).status_code == 409
+
+
+@pytest.mark.parametrize('record_kind', ['puncture', 'skin'])
+def test_default_reset_respects_record_lock(client, patient_id, photo_id, record_kind):
+    if record_kind == 'puncture':
+        assert record(client, patient_id, photo_id).status_code == 200
+    else:
+        assert client.post(f'/api/patients/{patient_id}/alerts',
+                           json=alert_payload(client, patient_id, photo_id)).status_code == 200
+    before = state(client, patient_id)
+    response = client.post(f'/api/patients/{patient_id}/layout',
+                           json={'version': before['patient']['version'], 'reset_to_default': True})
+    assert response.status_code == 409
+    after = state(client, patient_id)
+    assert after['sites'] == before['sites']
+    assert after['patient']['version'] == before['patient']['version']
+
+
+@pytest.mark.parametrize('reset_data', [
+    {'reset_to_default': 'true'},
+    {'reset_to_default': True, 'sites': default_sites()},
+])
+def test_default_reset_rejects_ambiguous_payload(client, patient_id, reset_data):
+    response = client.post(f'/api/patients/{patient_id}/layout', json={'version': 1, **reset_data})
+    assert response.status_code == 400
+    assert state(client, patient_id)['patient']['version'] == 1
+
+
 def test_active_alert_resolution_is_explicit(client, patient_id, photo_id):
     r = client.post(f'/api/patients/{patient_id}/alerts',json=alert_payload(client, patient_id, photo_id))
     assert r.status_code == 200, r.text
