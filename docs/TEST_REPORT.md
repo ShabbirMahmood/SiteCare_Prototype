@@ -1,5 +1,13 @@
 # Packaging verification report
 
+## Patient Options And Longitudinal Records — 2026-09-23
+
+The complete synthetic Windows suite passed **136 tests**, with one existing Starlette/AnyIO deprecation warning. All six JavaScript modules passed syntax checks. Coverage now includes full ellipse containment and validation; separate Pain/Tenderness types; patient-isolated dosage presets, reason requirements and completion defaults; out-of-order history; day-count/weekday appointment rules and one-next-visit calendars; JST monthly/yearly aggregation; unknown legacy rates; recovery and deletion counts; dated photo overlays; correction snapshots; expanded CSV; nurse permissions and deletion/session revocation; unused-photo protection; and schema-1 migration preserving old geometry, unknown dosage and later calibration choices.
+
+A separate temporary installation on port 8001 was checked with synthetic records in English and Japanese. Browser checks exercised linked X/Y dimensions, independent ellipse height, mouse-drawn width/height with retained observations, dosage step buttons and change colors, preset completion and next-dose defaults, the single identity checkbox, exclusive appointment methods, monthly/yearly/site reports, alert histograms, historical photo overlays, record correction history, and patient-code links with readable audit summaries. No JavaScript console errors were reported. The user’s data folder was not used by these tests.
+
+The earlier dated sections below describe earlier releases; default calibration and scheduling behavior changed in this update.
+
 ## Photo History and Keep Calibration Verification — 2026-09-20
 
 The full Windows suite completed with **112 passed**, with one existing Starlette/AnyIO deprecation warning. JavaScript syntax checks passed for all four modules. Nine new synthetic test cases cover:

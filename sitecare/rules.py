@@ -57,6 +57,13 @@ def distance(a: dict, b: dict) -> float:
     return hypot(a["x"] - b["x"], a["y"] - b["y"])
 
 
+def inside_alert(point: dict, alert: dict) -> bool:
+    """Full width/height are diameters in the patient coordinate plane."""
+    rx = (alert.get("width_cm") or alert["radius"] * 2) / 2
+    ry = (alert.get("height_cm") or alert["radius"] * 2) / 2
+    return ((point["x"] - alert["x"]) / rx) ** 2 + ((point["y"] - alert["y"]) / ry) ** 2 <= 1 + EPSILON
+
+
 def body_to_image(x: float, y: float, alignment: dict) -> tuple[float, float]:
     r = alignment["angle"] * pi / 180
     p = alignment["ppm"]
@@ -95,7 +102,8 @@ def relevant_complications(point: dict, number: int, complications: list[dict],
                            as_of: datetime) -> list[dict]:
     return [c for c in complications
             if as_of - timedelta(days=RECURRENCE_DAYS) <= parse_time(c["observed_at"]) <= as_of
-            and (c["site_number"] == number or distance(point, c) <= c["radius"])]
+            and (not c.get("voided_at") or parse_time(c["voided_at"]) > as_of)
+            and (c["site_number"] == number or inside_alert(point, c))]
 
 
 def assess_point(point: dict, number: int, events: list[dict], complications: list[dict],
@@ -123,9 +131,7 @@ def assess_point(point: dict, number: int, events: list[dict], complications: li
                             "site": e["site_number"], "event_id": e["id"],
                             "distance_cm": round(distance(point, e), 2), "until": iso(until)})
     active = [c for c in complications
-              if parse_time(c["observed_at"]) <= as_of
-              and (not c.get("resolved_at") or parse_time(c["resolved_at"]) > as_of)
-              and distance(point, c) <= c["radius"] + EPSILON]
+              if alert_active(c, as_of) and inside_alert(point, c)]
     for c in active:
         reasons.append({"code": "active_alert", "alert_id": c["id"], "types": c["types"]})
     past = relevant_complications(point, number, complications, as_of)
@@ -172,6 +178,7 @@ def event_applies(event: dict, as_of: datetime) -> bool:
 
 def alert_active(alert: dict, as_of: datetime) -> bool:
     return (parse_time(alert["observed_at"]) <= as_of and
+            (not alert.get("voided_at") or parse_time(alert["voided_at"]) > as_of) and
             (not alert.get("resolved_at") or parse_time(alert["resolved_at"]) > as_of))
 
 

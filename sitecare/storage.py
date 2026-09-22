@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS app_clock(
  revision INTEGER NOT NULL DEFAULT 0);
 INSERT OR IGNORE INTO app_clock(id) VALUES(1);
 CREATE TABLE IF NOT EXISTS app_settings(
- id INTEGER PRIMARY KEY CHECK(id=1), keep_calibration INTEGER NOT NULL DEFAULT 0
+ id INTEGER PRIMARY KEY CHECK(id=1), keep_calibration INTEGER NOT NULL DEFAULT 1
  CHECK(keep_calibration IN (0,1)), revision INTEGER NOT NULL DEFAULT 0);
 INSERT OR IGNORE INTO app_settings(id) VALUES(1);
 CREATE TABLE IF NOT EXISTS id_sequences(name TEXT PRIMARY KEY, last_id INTEGER NOT NULL);
@@ -68,6 +68,10 @@ CREATE TABLE IF NOT EXISTS appointments(
 CREATE TABLE IF NOT EXISTS audit(
  id INTEGER PRIMARY KEY, at TEXT NOT NULL, actor TEXT NOT NULL, patient_id INTEGER,
  action TEXT NOT NULL, entity TEXT NOT NULL, detail_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS record_revisions(
+ id INTEGER PRIMARY KEY, patient_id INTEGER NOT NULL REFERENCES patients(id),
+ record_type TEXT NOT NULL, record_id INTEGER NOT NULL, changed_at TEXT NOT NULL,
+ actor TEXT NOT NULL, reason TEXT NOT NULL, before_json TEXT NOT NULL, after_json TEXT NOT NULL);
 """
 
 
@@ -85,8 +89,44 @@ def initialize(data_dir: Path) -> None:
     with closing(connect(data_dir)) as db:
         db.execute("PRAGMA journal_mode=WAL")
         db.executescript(SCHEMA)
-        if db.execute("SELECT version FROM schema_info").fetchone()[0] != 1:
+        version = db.execute("SELECT version FROM schema_info").fetchone()[0]
+        if version not in (1, 2):
             raise RuntimeError("Unsupported database version. Preserve your data and contact the developer.")
+        additions = {
+            "patients": {"dosage_category": "TEXT NOT NULL DEFAULT 'standard'", "dosage_rate": "REAL NOT NULL DEFAULT 0.15",
+                         "dosage_step": "REAL NOT NULL DEFAULT 0.01", "dosage_reason": "TEXT NOT NULL DEFAULT ''",
+                         "dosage_pending": "INTEGER NOT NULL DEFAULT 0", "appointment_mode": "TEXT NOT NULL DEFAULT 'days'",
+                         "appointment_days": "INTEGER NOT NULL DEFAULT 3", "appointment_weekdays": "TEXT NOT NULL DEFAULT '[]'"},
+            "events": {"dosage_category": "TEXT", "dosage_rate": "REAL", "dosage_previous_rate": "REAL",
+                       "dosage_status": "TEXT", "dosage_reason": "TEXT NOT NULL DEFAULT ''"},
+            "complications": {"width_cm": "REAL", "height_cm": "REAL", "voided_at": "TEXT",
+                              "voided_by": "TEXT", "void_reason": "TEXT"},
+            "audit": {"patient_code": "TEXT"},
+        }
+        for table, columns in additions.items():
+            existing = {r[1] for r in db.execute(f"PRAGMA table_info({table})")}
+            for name, definition in columns.items():
+                if name not in existing:
+                    db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+        db.execute("UPDATE complications SET width_cm=radius*2,height_cm=radius*2 WHERE width_cm IS NULL")
+        db.execute("UPDATE audit SET patient_code=(SELECT code FROM patients WHERE patients.id=audit.patient_id) "
+                   "WHERE patient_code IS NULL AND patient_id IS NOT NULL")
+        for entry in rows(db, "SELECT patient_id,detail_json FROM audit WHERE action='patient.deleted'"):
+            code = json.loads(entry["detail_json"]).get("code")
+            if code:
+                db.execute("UPDATE audit SET patient_code=? WHERE patient_id=? AND patient_code IS NULL",
+                           (code, entry["patient_id"]))
+        if version == 1:
+            # The previous UI combined pain/tenderness. Preserve that meaning;
+            # new observations can distinguish the two without rewriting history.
+            for row in rows(db, "SELECT id,types_json FROM complications"):
+                types = json.loads(row["types_json"])
+                if "pain" in types:
+                    types = ["pain_tenderness_legacy" if value == "pain" else value for value in types]
+                    db.execute("UPDATE complications SET types_json=? WHERE id=?", (json.dumps(types), row["id"]))
+            # One-time upgrade requested for this installation; subsequent choices persist.
+            db.execute("UPDATE app_settings SET keep_calibration=1,revision=revision+1 WHERE keep_calibration=0")
+            db.execute("UPDATE schema_info SET version=2")
         # Earlier installations had one immutable layout per patient. Preserve it
         # on every existing photo before allowing edits on later visit photos.
         if "sites_json" not in {r[1] for r in db.execute("PRAGMA table_info(photos)")}:
@@ -159,8 +199,10 @@ def one(db: sqlite3.Connection, sql: str, args: tuple = ()) -> dict | None:
 
 
 def audit(db, actor: str, action: str, entity: str, detail: dict, patient_id: int | None = None):
-    db.execute("INSERT INTO audit(at,actor,patient_id,action,entity,detail_json) VALUES(?,?,?,?,?,?)",
-               (iso(now_utc()), actor, patient_id, action, entity, json.dumps(detail, ensure_ascii=False)))
+    p = one(db, "SELECT code FROM patients WHERE id=?", (patient_id,)) if patient_id else None
+    code = p["code"] if p else detail.get("code")
+    db.execute("INSERT INTO audit(at,actor,patient_id,action,entity,detail_json,patient_code) VALUES(?,?,?,?,?,?,?)",
+               (iso(now_utc()), actor, patient_id, action, entity, json.dumps(detail, ensure_ascii=False), code))
 
 
 def decode_photo(photo: dict | None) -> dict | None:

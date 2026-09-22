@@ -1,4 +1,5 @@
 import {appNow,state,t,esc,$,$$,api,icon,toast,fmt,shortTime,dayKey,jstInput,toISO,countdown,openDialog,field,input,check,badge,statusLabel,typeLabel,severityLabel,reasonLabel,appointmentBadge} from './ui.js';
+import {dosageDialog,appointmentRuleDialog,doseFields,bindDoseFields,doseBadge,doseNumber} from './patient-options.js';
 
 const clone = value => JSON.parse(JSON.stringify(value));
 const radialDistance = (a,b) => Math.hypot(a.x-b.x,a.y-b.y);
@@ -12,7 +13,7 @@ export async function mountWorkspace(root,patientId,callbacks){
     showHalos:true,photoOpacity:1,conflict:false,offline:false,clockRevision:state.clock?.revision,settingsRevision:state.settings?.revision};
   const serverNow=appNow;
   const eventApplies=e=>new Date(e.occurred_at).getTime()<=serverNow()&&(!e.voided_at||new Date(e.voided_at).getTime()>serverNow());
-  const alertActive=a=>new Date(a.observed_at).getTime()<=serverNow()&&(!a.resolved_at||new Date(a.resolved_at).getTime()>serverNow());
+  const alertActive=a=>new Date(a.observed_at).getTime()<=serverNow()&&(!a.resolved_at||new Date(a.resolved_at).getTime()>serverNow())&&(!a.voided_at||new Date(a.voided_at).getTime()>serverNow());
   const isLatest=()=>w.photo&&w.photo.id===w.data.current_photo_id;
   const keepCalibration=()=>Boolean(state.settings?.keep_calibration);
   const fresh=()=>w.photo&&serverNow()>=new Date(w.photo.captured_at).getTime()&&(keepCalibration()||serverNow()-new Date(w.photo.captured_at).getTime()<=24*3600000);
@@ -22,7 +23,7 @@ export async function mountWorkspace(root,patientId,callbacks){
   const actualDone=()=>!keepCalibration()&&w.data.events.some(e=>e.photo_id===w.photo?.id&&e.kind==='procedure'&&!e.voided_at);
   const displayedStates=()=>w.photo?.states||w.data.states;
   const selectedState=()=>w.assessment||displayedStates().find(s=>s.number===w.selected);
-  const modeLabels={inspect:t('Inspect','部位確認'),pan:t('Pan View','表示移動'),move:t('Move Photo','写真移動'),navel:t('Navel','臍'),calibrate:t('Ruler','定規'),mark:t('Exact Point','実際の点'),alert:t('Draw Alert','注意領域'),layout:t('Edit 14 Sites','14部位調整')};
+  const modeLabels={inspect:t('Inspect','部位確認'),pan:t('Pan View','表示移動'),move:t('Move Photo','写真移動'),navel:t('Navel','臍'),calibrate:t('Calibrate','校正'),dosage:t('Drug Dosage','投与速度'),appointment:t('Appointment','予約'),mark:t('Exact Point','実際の点'),alert:t('Draw Alert','注意領域'),layout:t('Edit Sites','14部位調整')};
 
   async function reload({latest=false,keepSelection=true}={}){
     const photoId=w.photo?.id, previousPoint=w.point?{...w.point}:null;
@@ -38,12 +39,19 @@ export async function mountWorkspace(root,patientId,callbacks){
   async function chooseSite(n){
     const s=w.sites.find(s=>s.number===n);w.selected=n;w.point={x:s.x,y:s.y};w.assessment=displayedStates().find(s=>s.number===n);w.mode='inspect';w.draft=null;updateTools();draw();renderAside();
   }
+  async function reloadOptions(){
+    const edits=w.photo?{photoId:w.photo.id,a:clone(w.a),sites:clone(w.sites),dirty:w.dirty,layoutDirty:w.layoutDirty,basePPM:w.basePPM}:null;
+    await reload();
+    if(edits&&(edits.dirty||edits.layoutDirty)&&w.photo?.id===edits.photoId&&editable()){
+      w.a=edits.a;w.sites=edits.sites;w.dirty=edits.dirty;w.layoutDirty=edits.layoutDirty;w.basePPM=edits.basePPM;render();
+    }
+  }
   function markDirty(){w.dirty=true;w.assessment=null;updateAlignmentStatus();renderAside();}
   function updateAlignmentStatus(){
     const elem=$('#alignment-state',root);if(!elem)return;
     const okay=verified();elem.innerHTML=badge(okay?'eligible':'unverified',okay?t('Alignment Verified','位置確認済み'):t('Alignment Required','位置確認が必要'));
     const save=$('#verify-alignment',root);if(save)save.disabled=!editable();
-    const tag=$('#photo-tag',root);if(tag){tag.className=`float-tag ${!okay?'warning':''}`;tag.textContent=!isLatest()?t('Older Photo · Current Restrictions','過去の写真・現在の制限を表示'):!okay?t('Uncalibrated / Unsaved · Do Not Use','未校正・未保存：使用不可'):!fresh()?t('Photo Over 24 Hours Old','撮影後24時間経過'):w.photo.demo?t('Synthetic Demo · Not A Patient','模式図デモ・実患者ではありません'):t('Calibrated Estimate · Verify On Body','校正済み推定値・身体で確認');}
+    const tag=$('#photo-tag',root);if(tag){tag.className=`float-tag ${!okay?'warning':''}`;tag.textContent=!isLatest()?t('Older Photo · Current Restrictions','過去の写真・現在の制限を表示'):!okay?t('Uncalibrated / Unsaved · Blocked','未校正・未保存：使用不可'):!fresh()?t('Photo Over 24 Hours Old','撮影後24時間経過'):w.photo.demo?t('Synthetic Demo · Not A Patient','模式図デモ・実患者ではありません'):t('Calibrated Estimate · Verify On Body','校正済み推定値・身体で確認');}
     const scale=$('#scale-readout',root);if(scale)scale.textContent=w.a?`${w.a.ppm.toFixed(1)} px/cm ${w.a.calibration?'✓':t('(Uncalibrated)','（未校正）')}`:'—';
   }
   function render(){
@@ -51,21 +59,23 @@ export async function mountWorkspace(root,patientId,callbacks){
     $('#breadcrumb').innerHTML=`<button class="button ghost small-button" id="back-patients">${t('Patients','患者一覧')}</button>${icon('chevron',12)}<span class="mono">${esc(p.code)}</span>`;
     $('#back-patients').addEventListener('click',()=>callbacks.go('patients'));
     const prev=w.photo&&w.data.photos.find(ph=>ph.id<w.photo.id&&ph.verified);
-    root.innerHTML=`<div class="page-head"><div><div class="eyebrow">${t('Patient Workspace','患者ワークスペース')}</div><div class="row"><h1>${esc(p.alias)}</h1>${p.demo?'<span class="demo-tag">Synthetic Demo</span>':''}</div><p><span class="chip-id">${esc(p.code)}</span> ${esc(p.therapy||t('Puncture-Site Rotation','穿刺部位ローテーション'))} ${!p.active?badge('blocked',t('Inactive','管理終了')):''}</p></div><div class="page-actions"><button class="button secondary" id="edit-profile">${icon('edit',16)}${t('Profile','プロフィール')}</button><a class="button secondary" href="/api/patients/${w.pid}/export.csv" title="${t('Export Includes Sensitive Patient Data','機微な患者データを含みます')}">${icon('download',16)}CSV</a><button class="button primary" id="upload-photo">${icon('camera',17)}${t('New Visit Photo','今回の写真を追加')}</button></div></div>
+    root.innerHTML=`<div class="page-head"><div><div class="eyebrow">${t('Patient Workspace','患者ワークスペース')}</div><div class="row"><h1>${esc(p.alias)}</h1>${p.demo?'<span class="demo-tag">Synthetic Demo</span>':''}</div><p><span class="chip-id">${esc(p.code)}</span> ${esc(p.therapy||t('Puncture-Site Rotation','穿刺部位ローテーション'))} ${!p.active?badge('blocked',t('Inactive','管理終了')):''}</p></div><div class="page-actions">${!w.photo?`<button class="button secondary" id="patient-dose">${t('Drug Dosage','投与速度')}</button><button class="button secondary" id="patient-appointment">${t('Appointment','予約')}</button>`:''}<button class="button secondary" id="edit-profile">${icon('edit',16)}${t('Profile','プロフィール')}</button><a class="button secondary" href="/api/patients/${w.pid}/export.csv" title="${t('Export Includes Sensitive Patient Data','機微な患者データを含みます')}">${icon('download',16)}CSV</a><button class="button primary" id="upload-photo">${icon('camera',17)}${t('New Visit Photo','今回の写真を追加')}</button></div></div>
     <div class="progress-strip"><span class="step ${w.photo?'done':''}"><em>1</em>${t('Upload Photo','写真追加')}</span><span class="line"></span><span class="step ${w.photo?.verified?'done':''}"><em>2</em>${t('Align & Calibrate','位置・校正確認')}</span><span class="line"></span><span class="step"><em>3</em>${t('Review Skin & Point','皮膚・位置確認')}</span><span class="line"></span><span class="step"><em>4</em>${t('Record Puncture','穿刺を記録')}</span></div>
     <div id="conflict-banner" class="notice danger mb-16 hidden">${icon('alert',18)}<span>${t('Another window updated this patient. Reload before continuing.','別の画面で更新されました。再読み込みしてください。')}</span><button class="button secondary small-button" id="conflict-reload">${t('Reload','再読み込み')}</button></div>
     <div class="workspace-grid"><div class="workspace-main stack"><section class="card canvas-card"><div class="canvas-heading"><div class="row"><h2>${t('Abdominal Site Map','腹部の穿刺部位マップ')}</h2><span id="alignment-state"></span></div>${w.data.photos.length?`<select id="photo-select" class="photo-select" aria-label="${t('Photo History','写真履歴')}">${w.data.photos.map((ph,i)=>`<option value="${ph.id}" ${ph.id===w.photo?.id?'selected':''}>${ph.id===w.data.current_photo_id?t('Current · ','現在・'):''}${fmt(ph.captured_at)} · #${ph.number}</option>`).join('')}</select>`:''}</div>
-    ${w.photo?`<div class="canvas-toolbar">${[['inspect','eye'],['pan','hand'],['move','move'],['navel','target'],['calibrate','ruler'],['mark','pin'],['alert','alert']].map(([mode,ic])=>`<button class="tool-button ${mode==='alert'?'red':''}" data-mode="${mode}" ${['move','navel','calibrate'].includes(mode)&&!editable()?'disabled':''} title="${modeLabels[mode]}">${icon(ic,17)}<span>${modeLabels[mode]}</span></button>`).join('')}<button class="tool-button" data-mode="layout" ${editable()?'':'disabled'}>${icon('edit',16)}<span>${modeLabels.layout}</span></button></div>
+    ${w.photo?`<div class="canvas-toolbar">${[['inspect','eye'],['pan','hand'],['move','move'],['navel','target'],['calibrate','ruler'],['dosage','settings'],['appointment','calendar'],['mark','pin'],['alert','alert']].map(([mode,ic])=>`<button class="tool-button ${mode==='alert'?'red':''}" data-mode="${mode}" ${['move','navel','calibrate'].includes(mode)&&!editable()?'disabled':''} title="${modeLabels[mode]}">${icon(ic,17)}<span>${modeLabels[mode]}</span></button>`).join('')}<button class="tool-button" data-mode="layout" ${editable()?'':'disabled'}>${icon('edit',16)}<span>${modeLabels.layout}</span></button></div>
     <div class="tool-hint" id="tool-hint"></div><div class="canvas-stage"><svg class="map-svg" id="site-map" viewBox="-18 -14 36 28" role="group" aria-label="${t('Interactive 14-site abdominal map. Use the numbered buttons or the accessible status table.','14部位の腹部マップ。番号ボタンまたは右側の表から操作できます。')}"><defs><marker id="flow-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#468c76"/></marker><pattern id="navel-hatch" width=".5" height=".5" patternUnits="userSpaceOnUse" patternTransform="rotate(30)"><line x1="0" y1="0" x2="0" y2=".5" stroke="#b98139" stroke-width=".04" opacity=".35"/></pattern></defs><image id="abdomen-photo" href="${w.photo.url}" x="0" y="0" width="${w.photo.width}" height="${w.photo.height}" preserveAspectRatio="none"/><g id="map-layer"></g><g id="tool-layer"></g></svg>
     <div class="canvas-floating"><div class="float-tag" id="photo-tag"></div><div class="float-tag">${t('Patient Right ←  Head Up  → Patient Left','患者の右 ← 頭側が上 → 患者の左')}</div></div><div class="canvas-coordinates">${t('Navel-Centred Map · Estimated cm','臍を原点とするマップ・推定cm')}</div><div class="view-controls"><button class="icon-button" id="zoom-out" aria-label="${t('Zoom Out','縮小')}">${icon('minus',17)}</button><span id="zoom-level">100%</span><button class="icon-button" id="zoom-in" aria-label="${t('Zoom In','拡大')}">${icon('plus',17)}</button><button class="icon-button" id="zoom-fit" aria-label="${t('Reset View','表示リセット')}">${icon('reset',16)}</button></div></div>
-    <div class="canvas-legend"><div class="legend-items">${[['green',t('Rule-Eligible','条件適合')],['blue',t('12-Day Rest','12日間休止')],['red',t('Do Not Use','使用不可')],['gray',t('Unverified','未確認')]].map(([c,l])=>`<span class="legend-item"><span class="legend-swatch ${c}"></span>${l}</span>`).join('')}</div><label class="photo-opacity">${t('Photo','写真')}<input id="photo-opacity" type="range" min="40" max="100" value="${w.photoOpacity*100}" aria-label="${t('Photo Opacity','写真の不透明度')}"></label></div>
+    <div class="canvas-legend"><div class="legend-items">${[['green',t('Eligible','条件適合')],['blue',t('12-Day Rest','12日間休止')],['red',t('Blocked','使用不可')],['gray',t('Unverified','未確認')]].map(([c,l])=>`<span class="legend-item"><span class="legend-swatch ${c}"></span>${l}</span>`).join('')}</div><label class="photo-opacity">${t('Photo','写真')}<input id="photo-opacity" type="range" min="40" max="100" value="${w.photoOpacity*100}" aria-label="${t('Photo Opacity','写真の不透明度')}"></label></div>
     <div class="alignment-panel"><div class="spaced"><div class="small strong">${w.photo.locked?t('Alignment Locked To Saved Records','保存済み記録の位置合わせを固定'):t('Photo Alignment Controls','写真の位置合わせ')}</div><span class="small mono muted" id="scale-readout"></span></div>
     ${editable()?`<div class="alignment-inputs mt-16">${field(t('Photo Size','写真サイズ'),'<input id="photo-size" type="range" min="30" max="250" value="100">',t('Resizing clears ruler calibration.','サイズ変更後は再校正が必要です。'))}${field(t('Photo Rotation','写真回転'),`<div class="row"><input id="photo-angle" type="range" min="-180" max="180" step=".1" value="${w.a.angle}" style="flex:1"><output id="angle-value" class="small mono">${w.a.angle.toFixed(1)}°</output></div>`)}</div>`:`<p class="small muted mt-16">${t('This saved photo is read-only. Upload a new visit photo to edit its layout and alignment.','この保存済み写真は読み取り専用です。新しい訪問写真を追加すると配置と位置合わせを編集できます。')}</p>`}
-    <div class="row mt-16"><button class="button primary small-button" id="verify-alignment" ${editable()?'':'disabled'}>${icon('check',15)}${t('Verify & Save Alignment','確認して位置を保存')}</button><button class="button layout-discard small-button" id="discard-alignment">${t('Discard Changes','変更を破棄')}</button><button class="button layout-save small-button" id="save-layout" ${editable()?'':'disabled'}>${t('Save 14-Site Layout','14部位配置を保存')}</button><button class="button layout-default small-button" id="default-layout" ${editable()?'':'disabled'} title="${t('Restore And Save The Original 14-Site Positions','標準の14部位配置に戻して保存')}">${icon('reset',15)}${t('Default Layout','標準配置')}</button></div>
+    <div class="row mt-16"><button class="button primary small-button" id="verify-alignment" ${editable()?'':'disabled'}>${icon('check',15)}${t('Verify & Save Alignment','確認して位置を保存')}</button><button class="button layout-discard small-button" id="discard-alignment">${t('Discard Changes','変更を破棄')}</button><button class="button layout-save small-button" id="save-layout" ${editable()?'':'disabled'}>${t('Save Site Layout','14部位配置を保存')}</button><button class="button layout-default small-button" id="default-layout" ${editable()?'':'disabled'} title="${t('Restore And Save The Original 14-Site Positions','標準の14部位配置に戻して保存')}">${icon('reset',15)}${t('Default Layout','標準配置')}</button></div>
     ${prev?`<div class="reference-preview"><img src="${prev.url}" alt="${t('Previous Verified Photo For Manual Landmark Comparison','目印の比較用：前回確認済み写真')}"><div><strong class="small">${t('Previous Reference Photo','前回の参考写真')}</strong><p>${fmt(prev.captured_at)} JST<br>${t('Compare landmarks and previous puncture marks. This is not automatic registration.','目印と過去の穿刺痕を比較してください。自動位置合わせではありません。')}</p></div></div>`:''}</div>`:
     `<div class="photo-empty"><div class="photo-empty-inner"><div class="empty-icon">${icon('camera',35)}</div><h3>${t('Start With An Abdominal Photo','腹部の写真から始めましょう')}</h3><p>${t('Include the navel, visible landmarks and a measured ruler segment. Your 14-site overlay will appear above the photo.','臍・位置合わせの目印・定規を写してください。写真の上に14部位のレイヤーを表示します。')}</p><button class="button primary" id="upload-first">${icon('upload',17)}${t('Upload Photograph','写真をアップロード')}</button></div></div>`}</section>
     <div class="notice warning slim">${icon('shield',17)}<span>${t('Photo distances are estimates, not verified skin-surface measurements. The nurse must check the actual skin and distances. Green does not mean clinically safe.','写真の距離は推定で、皮膚表面の実測値ではありません。看護師が皮膚と実際の距離を確認してください。緑色は安全を保証しません。')}</span></div></div><aside class="workspace-aside" id="workspace-aside"></aside></div>`;
     $('#upload-photo').addEventListener('click',uploadDialog);$('#upload-first')?.addEventListener('click',uploadDialog);
+    $('#patient-dose')?.addEventListener('click',()=>dosageDialog(w.data,reloadOptions));
+    $('#patient-appointment')?.addEventListener('click',()=>appointmentRuleDialog(w.data,reloadOptions));
     $('#edit-profile').addEventListener('click',()=>callbacks.editProfile(w.data.patient,()=>reload()));
     $('#conflict-reload').addEventListener('click',()=>reload().catch(e=>toast(e.message,true)));
     if(w.photo){bindCanvas();updateAlignmentStatus();updateTools();draw();}
@@ -100,11 +110,11 @@ export async function mountWorkspace(root,patientId,callbacks){
       node.innerHTML=`<div class="side-table-scroll"><table class="site-table"><thead><tr><th>${t('Site','部位')}</th><th>${t('Status','状態')}</th><th>${t('Rest / Last Use','残り・前回使用')}</th></tr></thead><tbody>${displayedStates().map(s=>`<tr class="clickable-row ${s.number===w.selected?'selected-row':''}" data-site-row="${s.number}" tabindex="0"><td>${String(s.number).padStart(2,'0')}</td><td>${badge(s.status)}</td><td><div class="small">${s.unlock_at?countdown(s.unlock_at,serverNow()):'—'}</div><div class="sub">${s.last_used_at?shortTime(s.last_used_at):t('Not Recorded','記録なし')}</div></td></tr>`).join('')}</tbody></table></div>`;
       $$('[data-site-row]',node).forEach(row=>{row.addEventListener('click',()=>chooseSite(Number(row.dataset.siteRow)));row.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();chooseSite(Number(row.dataset.siteRow));}});});
     }else if(w.tab==='history'){
-      node.innerHTML=`<div class="history-scroll">${w.data.events.length?w.data.events.map(e=>`<article class="history-card"><div class="spaced"><span class="title ${e.voided_at?'voided':''}">${t('Site','部位')} ${e.site_number} · ${fmt(e.occurred_at)}</span>${e.kind==='history'?`<span class="badge unverified">${t('History','過去')}</span>`:''}</div><p class="description">${esc(e.actor)} · (${e.x.toFixed(2)}, ${e.y.toFixed(2)}) cm<br>${esc(e.note||'')}${e.voided_at?`<br>${t('Voided:','取消：')} ${esc(e.void_reason)}`:''}${e.exception_reason?`<br>${esc(e.exception_reason)}`:''}</p>${e.warnings.length?`<div class="detail-reason mt-16">${e.warnings.map(r=>esc(reasonLabel(r))).join('<br>')}</div>`:''}<div class="row mt-16"><button class="button ghost small-button" data-history-photo="${e.photo_id}">${t('Source Photo','記録写真')}</button>${state.user.role==='admin'&&!e.voided_at?`<button class="button ghost small-button" data-void="${e.id}">${t('Correct / Void','記録を取消')}</button>`:''}</div></article>`).join(''):`<div class="card-body"><p class="small">${t('No punctures recorded yet.','穿刺記録はまだありません。')}</p></div>`}</div>`;
+      node.innerHTML=`<div class="history-scroll">${w.data.events.length?w.data.events.map(e=>`<article class="history-card"><div class="spaced"><span class="title ${e.voided_at?'voided':''}">${t('Site','部位')} ${e.site_number} · ${fmt(e.occurred_at)}</span>${e.kind==='history'?`<span class="badge unverified">${t('History','過去')}</span>`:''}</div><p class="description">${esc(e.actor)} · (${e.x.toFixed(2)}, ${e.y.toFixed(2)}) cm<br>${doseNumber(e.dosage_rate)} mL/h · ${doseBadge(e.dosage_status)}<br>${esc(e.note||'')}${e.voided_at?`<br>${t('Voided:','取消：')} ${esc(e.void_reason)}`:''}${e.exception_reason?`<br>${esc(e.exception_reason)}`:''}</p>${e.warnings.length?`<div class="detail-reason mt-16">${e.warnings.map(r=>esc(reasonLabel(r))).join('<br>')}</div>`:''}<div class="row mt-16"><button class="button ghost small-button" data-history-photo="${e.photo_id}">${t('Source Photo','記録写真')}</button>${state.user.role==='admin'&&!e.voided_at?`<button class="button ghost small-button" data-void="${e.id}">${t('Correct / Void','記録を取消')}</button>`:''}</div></article>`).join(''):`<div class="card-body"><p class="small">${t('No punctures recorded yet.','穿刺記録はまだありません。')}</p></div>`}</div>`;
       $$('[data-void]',node).forEach(b=>b.addEventListener('click',()=>voidDialog(Number(b.dataset.void))));
       $$('[data-history-photo]',node).forEach(b=>b.addEventListener('click',()=>switchPhoto(Number(b.dataset.historyPhoto))));
     }else{
-      node.innerHTML=`<div class="history-scroll">${w.data.alerts.length?w.data.alerts.map(a=>`<article class="history-card"><div class="spaced"><span class="title">${t('Site','部位')} ${a.site_number} · ${a.types.map(typeLabel).join(' / ')}</span>${badge(a.resolved_at?'eligible':'blocked',a.resolved_at?t('Recovered','回復済み'):t('Active','未回復'))}</div><p class="description">${fmt(a.observed_at)} JST · ${esc(a.actor)}<br>${t('Radius','半径')} ${a.radius.toFixed(1)} cm · ${esc(severityLabel(a.severity))}${a.note?`<br>${esc(a.note)}`:''}${a.resolved_at?`<br>${t('Recovery:','回復確認：')} ${fmt(a.resolved_at)} · ${esc(a.resolution_note)}`:''}</p>${!a.resolved_at?`<button class="button secondary small-button mt-16" data-resolve="${a.id}">${t('Confirm Full Recovery','完全回復を確認')}</button>`:''}</article>`).join(''):`<div class="card-body"><p class="small">${t('No skin observations yet. Choose Draw alert to mark an area.','皮膚所見はまだありません。「注意領域」で部位を指定します。')}</p></div>`}</div>`;
+      node.innerHTML=`<div class="history-scroll">${w.data.alerts.length?w.data.alerts.map(a=>`<article class="history-card"><div class="spaced"><span class="title">${t('Site','部位')} ${a.site_number} · ${a.types.map(typeLabel).join(' / ')}</span>${badge(a.voided_at?'unverified':a.resolved_at?'eligible':'blocked',a.voided_at?t('Deleted','削除済み'):a.resolved_at?t('Recovered','回復済み'):t('Active','未回復'))}</div><p class="description">${fmt(a.observed_at)} JST · ${esc(a.actor)}<br>${t('Width × Height','幅 × 高さ')} ${(a.width_cm||a.radius*2).toFixed(2)} × ${(a.height_cm||a.radius*2).toFixed(2)} cm · ${esc(severityLabel(a.severity))}${a.note?`<br>${esc(a.note)}`:''}${a.resolved_at?`<br>${t('Recovery:','回復確認：')} ${fmt(a.resolved_at)} · ${esc(a.resolution_note)}`:''}</p>${!a.resolved_at&&!a.voided_at?`<button class="button secondary small-button mt-16" data-resolve="${a.id}">${t('Confirm Full Recovery','完全回復を確認')}</button>`:''}</article>`).join(''):`<div class="card-body"><p class="small">${t('No skin observations yet. Choose Draw alert to mark an area.','皮膚所見はまだありません。「注意領域」で部位を指定します。')}</p></div>`}</div>`;
       $$('[data-resolve]',node).forEach(b=>b.addEventListener('click',()=>resolveDialog(Number(b.dataset.resolve))));
     }
   }
@@ -120,7 +130,7 @@ export async function mountWorkspace(root,patientId,callbacks){
     const image=$('#abdomen-photo',svg);image.setAttribute('transform',`scale(${1/w.a.ppm}) rotate(${-w.a.angle}) translate(${-w.a.cx} ${-w.a.cy})`);image.setAttribute('opacity',w.photoOpacity);
     const initialSvgScale=svg.getScreenCTM()?.a||20,hitRadius=Math.max(.96,22/initialSvgScale),font=.56;
     const connectors=w.sites.slice(0,8).map(s=>`<line x1="0" y1="0" x2="${s.x}" y2="${s.y}" stroke="#a47b6e" stroke-width=".055" stroke-dasharray=".23 .2" opacity=".58"/>`).join('');
-    const active=w.data.alerts.filter(alertActive).map(a=>`<g><circle cx="${a.x}" cy="${a.y}" r="${a.radius}" fill="#e0747f" fill-opacity=".29" stroke="#bd4d5a" stroke-width=".075"/><text x="${a.x}" y="${a.y-a.radius-.25}" class="point-label" font-size=".50" fill="#9b3745" text-anchor="middle">${esc(a.types.map(typeLabel).join(' / '))}</text></g>`).join('');
+    const active=w.data.alerts.filter(alertActive).map(a=>`<g><ellipse cx="${a.x}" cy="${a.y}" rx="${(a.width_cm||a.radius*2)/2}" ry="${(a.height_cm||a.radius*2)/2}" fill="#e0747f" fill-opacity=".29" stroke="#bd4d5a" stroke-width=".075"/><text x="${a.x}" y="${a.y-(a.height_cm||a.radius*2)/2-.25}" class="point-label" font-size=".50" fill="#9b3745" text-anchor="middle">${esc(a.types.map(typeLabel).join(' / '))}</text></g>`).join('');
     const events=w.data.events.filter(eventApplies).map(e=>{const recent=serverNow()-new Date(e.occurred_at).getTime()<12*86400000;return `<g>${recent&&w.showHalos?`<circle cx="${e.x}" cy="${e.y}" r="2.5" fill="#8aafea" fill-opacity=".055" stroke="#467bc2" stroke-opacity=".35" stroke-width=".045" stroke-dasharray=".16 .17"/>`:''}<circle cx="${e.x}" cy="${e.y}" r=".14" fill="${recent?'#245aaa':'#797f7a'}" stroke="white" stroke-width=".05"/><title>#${e.id} · ${fmt(e.occurred_at)} JST · ${esc(e.actor)}</title></g>`;}).join('');
     const nodes=w.sites.map(s=>{
       const saved=displayedStates().find(v=>v.number===s.number),isReady=clearReady();
@@ -146,7 +156,7 @@ export async function mountWorkspace(root,patientId,callbacks){
     let tool='';
     if(w.point){const p=w.point;tool+=`<path d="M${p.x-.55} ${p.y}H${p.x+.55} M${p.x} ${p.y-.55}V${p.y+.55}" stroke="#193c52" stroke-width=".065" pointer-events="none"/><circle cx="${p.x}" cy="${p.y}" r=".31" fill="none" stroke="#fff" stroke-width=".05" pointer-events="none"/>`;}
     if(w.calPoints.length){const ps=w.calPoints.map(p=>fromImage(p,w.a));tool+=ps.map(p=>`<circle cx="${p.x}" cy="${p.y}" r=".18" fill="#fff" stroke="#175e8b" stroke-width=".065"/>`).join('');if(ps.length===2)tool+=`<line x1="${ps[0].x}" y1="${ps[0].y}" x2="${ps[1].x}" y2="${ps[1].y}" stroke="#175e8b" stroke-width=".065"/>`;}
-    if(w.draft)tool+=`<circle cx="${w.draft.x}" cy="${w.draft.y}" r="${w.draft.radius}" fill="#e47780" fill-opacity=".26" stroke="#b54457" stroke-dasharray=".16 .10" stroke-width=".08"/>`;
+    if(w.draft)tool+=`<ellipse cx="${w.draft.x}" cy="${w.draft.y}" rx="${w.draft.width_cm/2}" ry="${w.draft.height_cm/2}" fill="#e47780" fill-opacity=".26" stroke="#b54457" stroke-dasharray=".16 .10" stroke-width=".08"/>`;
     $('#tool-layer',svg).innerHTML=tool;
     $('#zoom-level',root).textContent=`${Math.round(36/w.view.w*100)}%`;
   }
@@ -160,12 +170,15 @@ export async function mountWorkspace(root,patientId,callbacks){
       navel:t('Tap the actual navel on the photo. The photograph will move so the navel is at the map centre.','写真上の実際の臍をタップ。臍がマップ中央にくるよう写真が移動します。'),
       calibrate:w.calPoints.length===1?t('Tap the second ruler mark. Use a known 2–30 cm segment in the same skin plane.','定規の2点目をタップ。皮膚と同じ平面の2～30cmの長さを使用します。'):t('Tap two marks on a ruler in the image, then enter the actual distance in centimetres.','写真の定規上の2点をタップし、実際の距離をcmで入力します。'),
       mark:t('Tap the exact puncture point. The nearest chart number is assigned automatically; the exact point is stored too.','実際の穿刺点をタップ。最も近い番号を自動割り当てし、座標も保存します。'),
-      alert:t('Drag from the centre to the edge of the affected area to draw a red circle. Choose its observations next.','注意部位の中心から端までドラッグして赤い円を描き、所見を選択します。'),
+      alert:t('Click the centre of the spot, then enter its width and height.','部位の中心をクリックして幅と高さを入力します。'),
+      drawspot:t('Drag from one corner of the spot to the opposite corner. Width and height are measured from your drawing.','部位を囲む角から反対の角までドラッグします。幅と高さを自動計算します。'),
       layout:t('Drag numbered sites to adjust this photo’s layout. Minimum: 5 cm from navel, 2.5 cm between sites. Save layout separately.','番号をドラッグして、この写真の配置を調整します。臍から5cm・部位間2.5cm以上が必要です。配置を別途保存します。')};
     $('#tool-hint',root).innerHTML=`${icon(w.mode==='calibrate'?'ruler':w.mode==='alert'?'alert':'target',15)}<span>${hints[w.mode]}</span>`;
     $('#site-map').dataset.mode=w.mode;
   }
   function setMode(mode){
+    if(mode==='dosage'){dosageDialog(w.data,reloadOptions);return;}
+    if(mode==='appointment'){appointmentRuleDialog(w.data,reloadOptions);return;}
     if(['move','navel','calibrate','layout'].includes(mode)&&!editable())return;
     if(['mark','alert'].includes(mode)&&!verified()){toast(t('Calibrate, verify and save this photo first.','先に校正・位置確認をして保存してください。'),true);return;}
     if(mode==='alert'&&!clearReady()){toast(t('Use the latest, current photo to mark skin concerns.','最新の写真を使って皮膚所見を記録してください。'),true);return;}
@@ -192,7 +205,7 @@ export async function mountWorkspace(root,patientId,callbacks){
         initialA:clone(w.a),initialView:{...w.view},site:site?Number(site):null,moved:false};
       if(w.mode==='layout'&&site){w.drag.original={...w.sites.find(s=>s.number===Number(site))};}
       svg.setPointerCapture(e.pointerId);e.preventDefault();
-      if(w.mode==='alert'){w.draft={x:p.x,y:p.y,radius:.3};draw();}
+      if(['alert','drawspot'].includes(w.mode)){w.draft={x:p.x,y:p.y,width_cm:.3,height_cm:.3};draw();}
     });
     svg.addEventListener('pointermove',e=>{
       const d=w.drag;if(!d||d.id!==e.pointerId)return;
@@ -201,7 +214,7 @@ export async function mountWorkspace(root,patientId,callbacks){
       if(w.mode==='pan'){w.view.x=d.initialView.x-dx;w.view.y=d.initialView.y-dy;draw();}
       else if(w.mode==='move'&&editable()){
         const r=d.initialA.angle*Math.PI/180;w.a.cx=d.initialA.cx-d.initialA.ppm*(dx*Math.cos(r)-dy*Math.sin(r));w.a.cy=d.initialA.cy-d.initialA.ppm*(dx*Math.sin(r)+dy*Math.cos(r));w.dirty=true;draw();
-      }else if(w.mode==='alert'){w.draft.radius=Math.min(15,Math.max(.3,Math.hypot(dx,dy)));draw();}
+      }else if(w.mode==='drawspot'){const p=svgPoint(e);w.draft={x:(p.x+d.start.x)/2,y:(p.y+d.start.y)/2,width_cm:Math.min(30,Math.max(.01,Math.abs(p.x-d.start.x))),height_cm:Math.min(30,Math.max(.01,Math.abs(p.y-d.start.y)))};draw();}
       else if(w.mode==='layout'&&d.original&&editable()){const s=w.sites.find(s=>s.number===d.site);s.x=d.original.x+dx;s.y=d.original.y+dy;w.layoutDirty=true;draw();}
     });
     svg.addEventListener('pointerup',async e=>{
@@ -218,7 +231,7 @@ export async function mountWorkspace(root,patientId,callbacks){
           w.calPoints.push(actual);draw();updateTools();if(w.calPoints.length===2)calibrationDialog();
         }else if(w.mode==='mark'){
           w.point={x:Number(p.x.toFixed(5)),y:Number(p.y.toFixed(5))};w.assessment=await api(`/api/patients/${w.pid}/screen-point`,{method:'POST',data:{...w.point,photo_id:w.photo.id}});w.selected=w.assessment.number;draw();renderAside();
-        }else if(w.mode==='alert'){alertDialog();}
+        }else if(['alert','drawspot'].includes(w.mode)){w.mode='alert';updateTools();alertDialog();}
         else if(w.mode==='inspect'&&d.site&&!d.moved){chooseSite(d.site);}
       }catch(error){toast(error.message,true);}
     });
@@ -239,7 +252,7 @@ export async function mountWorkspace(root,patientId,callbacks){
     dialog.addEventListener('close',()=>{w.calPoints=[];updateTools();draw();},{once:true});
   }
   function verifyDialog(){
-    if(!w.a.calibration){toast(t('Use Ruler to calibrate a known distance before saving.','「定規」で実際の長さを校正してから保存してください。'),true);return;}
+    if(!w.a.calibration){toast(t('Use Calibrate to calibrate a known distance before saving.','「定規」で実際の長さを校正してから保存してください。'),true);return;}
     if(w.layoutDirty){toast(t('Save the 14-site layout first, then verify photo alignment.','先に14部位配置を保存してから、写真の位置を確認してください。'),true);return;}
     openDialog({title:t('Verify Photo Alignment','写真の位置合わせを確認'),body:`<p><strong>${esc(w.data.patient.code)}</strong> · ${esc(w.data.patient.alias)}</p><div class="notice mb-16">${icon('ruler',17)}<span>${t('Reference:','基準：')} ${w.a.calibration.length_cm} cm · ${w.a.ppm.toFixed(2)} px/cm</span></div>
       ${check('identity',t('This is the correct patient and photograph.','患者と写真が一致していることを確認しました。'))}
@@ -278,37 +291,42 @@ export async function mountWorkspace(root,patientId,callbacks){
   function recordDialog(history){
     const s=selectedState(),point={...w.point},requestKey=crypto.randomUUID();
     openDialog({title:history?t('Record A Previous Puncture','過去の穿刺を記録'):t('Record Completed Puncture','実施済みの穿刺を記録'),submit:t('Save Puncture Record','穿刺記録を保存'),body:`<p><strong>${esc(w.data.patient.code)}</strong> · ${esc(w.data.patient.alias)}</p>
-      <div class="notice ${history?'warning':''} mb-16">${icon(history?'history':'pin',18)}<span>${history?t('Documentation of an already-performed puncture only. Rule conflicts are retained as warnings; this does not authorize a new puncture.','実施済みの事実を記録する機能です。条件違反は警告付きで残ります。新たな穿刺を許可するものではありません。'):t('Document the actual completed procedure, not a future plan. No drug or dose is prescribed by this app.','実際に完了した穿刺を記録します。将来の予定ではありません。薬剤・投与量はこのアプリでは指示しません。')}</span></div>
+      ${history?`<div class="notice warning mb-16">${t('Document an already-performed puncture. Conflicts are retained with the historical record.','実施済みの穿刺を記録します。条件との矛盾は履歴に残ります。')}</div>`:''}
+      ${doseFields(w.data.dosage,history)}
       <div class="form-grid">${field(t('Nearest Chart Number','最も近い番号'),input('site_display',s.number,'text','readonly'))}${field(t('Puncture Date & Time (JST)','穿刺日時（日本時間）'),input('occurred_at',jstInput(serverNow()),'datetime-local','required'))}</div>
       <div class="metric-line"><span>${t('Exact Point From Navel','臍からの正確な記録座標')}</span><strong class="mono">x=${point.x.toFixed(3)}, y=${point.y.toFixed(3)} cm</strong></div>
       ${history?field(t('Historical Record Explanation','過去記録の説明'),'<textarea name="exception_reason" required minlength="8" maxlength="2000"></textarea>',t('Include the source and any uncertain or exceptional circumstances. At least 8 characters.','情報源・不確実性・例外事項を8文字以上で記録してください。')):''}
       ${field(t('Procedure Note','穿刺メモ'),'<textarea name="note" maxlength="2000"></textarea>')}
       ${check('identity_checked',t(`I verified patient ${esc(w.data.patient.code)} and the correct record.`,`患者 ${esc(w.data.patient.code)} と記録の一致を確認しました。`))}
-      ${check('point_checked',t('The crosshair matches the actual puncture point, not just an approximate chart button.','十字が実際の穿刺点に一致しており、単なる番号ボタンの概位置ではないことを確認しました。'))}
-      ${check('clinical_checked',history?t('I reviewed the source record, skin history, geometry and any rule conflicts.','情報源、皮膚履歴、位置、条件との矛盾を確認しました。'):t('The actual skin was assessed and physical 5 cm / 2.5 cm distances were checked; the site was not chosen from photo colour alone.','皮膚を実際に評価し、5cm/2.5cmの距離を身体で確認しました。写真の色だけで部位を選んでいません。'))}
-      <p class="small mt-16">${t('Recorded By:','記録者：')} <strong>${esc(state.user.display_name)}</strong></p>`,onSubmit:async f=>{
-        if(!f.has('point_checked'))throw new Error(t('Confirm the exact physical point.','実際の穿刺点を確認してください。'));
+      <p class="small mt-16">${t('Recorded By:','記録者：')} <strong>${esc(state.user.display_name)}</strong></p>`,onOpen:form=>{if(history){const compare=bindDoseFields(form,w.data.dosage);let serial=0;const refresh=async()=>{const own=++serial;try{const d=await api(`/api/patients/${w.pid}/dosage-context?at=${encodeURIComponent(toISO($('[name=occurred_at]',form).value))}`);if(own===serial&&form.isConnected)compare(d.previous_rate);}catch(e){toast(e.message,true);}};$('[name=occurred_at]',form).addEventListener('change',refresh);refresh();}},onSubmit:async f=>{
         const data={...Object.fromEntries(f),...point,photo_id:w.photo.id,version:w.data.patient.version,kind:history?'history':'procedure',
-          identity_checked:f.has('identity_checked'),clinical_checked:f.has('clinical_checked'),point_checked:true,occurred_at:toISO(f.get('occurred_at')),request_key:requestKey};
+          dosage_category:f.get('dosage_category')||w.data.dosage.category,dosage_rate:Number(f.get('dosage_rate')),dosage_reason:f.get('dosage_reason'),
+          identity_checked:f.has('identity_checked'),occurred_at:toISO(f.get('occurred_at')),request_key:requestKey};
         await api(`/api/patients/${w.pid}/events`,{method:'POST',data});await reload();toast(t('Puncture saved. Rest period and next visit updated.','穿刺記録を保存し、休止期間と次回予定を更新しました。'));
       }});
   }
   function alertDialog(){
-    const draft={...w.draft};
-    const dialog=openDialog({title:t('Mark A Skin Concern','皮膚注意部位を記録'),submit:t('Save Red Alert Area','赤い注意領域を保存'),body:`<div class="alert-area-preview"><span>${t('No-Use Region Until Recovery','回復確認まで使用不可')}</span><strong>${t('Circular Region','円形の領域')}</strong></div>
-      <div class="form-grid">${field(t('Radius (cm)','半径（cm）'),input('radius',draft.radius.toFixed(2),'number','required min="0.3" max="15" step="0.01"'))}${field(t('Observed Time (JST)','所見の確認日時（日本時間）'),input('observed_at',jstInput(serverNow()),'datetime-local','required'))}</div>
-      <div class="field"><span>${t('Observation Type — Select All That Apply','所見の種類（複数選択可）')}</span><div class="check-grid">${['redness','hardness','pain','swelling','bruising','leakage','other'].map(type=>`<label class="check"><input type="checkbox" name="types" value="${type}"><span>${typeLabel(type)}</span></label>`).join('')}</div></div>
+    const draft={...w.draft}, saved=w.alertForm||{};let drawing=false, independentY=Math.abs(draft.width_cm-draft.height_cm)>.001;
+    const dialog=openDialog({title:t('Draw Alert','注意領域'),submit:t('Save Alert','注意領域を保存'),body:`<p>${t('The selected point is the centre. Width and height are full diameters, in centimetres.','選択した点が中心です。幅と高さは直径全体をcmで入力します。')}</p>
+      <div class="spot-controls">${field(t('Width: Horizontal X Axis (cm)','幅：水平X軸（cm）'),input('width_cm',draft.width_cm.toFixed(2),'number','required min="0.01" max="30" step="0.01"'))}${field(t('Height: Vertical Y Axis (cm)','高さ：垂直Y軸（cm）'),input('height_cm',draft.height_cm.toFixed(2),'number','required min="0.01" max="30" step="0.01"'))}<button type="button" class="button layout-default" id="draw-spot">${t('Draw Spot','マウスで描画')}</button></div>
+      <div class="spot-preview" aria-label="${t('Spot Shape Preview','形状のプレビュー')}"><svg viewBox="0 0 220 90"><ellipse id="spot-ellipse" cx="110" cy="45" rx="36" ry="36" fill="#f5bac2" stroke="#b43c50" stroke-width="2"/></svg><span id="spot-size" class="small"></span></div>
+      ${field(t('Observed Time (JST)','所見の確認日時（日本時間）'),input('observed_at',saved.observed_at||jstInput(serverNow()),'datetime-local','required'))}
+      <div class="field"><span>${t('Observation Type — Select All That Apply','所見の種類（複数選択可）')}</span><div class="check-grid">${['redness','hardness','pain','tenderness','swelling','bruising','leakage','other'].map(type=>`<label class="check"><input type="checkbox" name="types" value="${type}" ${saved.types?.includes(type)?'checked':''}><span>${typeLabel(type)}</span></label>`).join('')}</div></div>
       ${field(t('Recorded Severity','観察された程度'),`<select name="severity"><option value="mild">${t('Mild','軽度')}</option><option value="moderate">${t('Moderate','中等度')}</option><option value="severe">${t('Severe','重度')}</option></select>`)}
-      ${field(t('Assessment / Reason To Avoid','評価・使用禁止の理由'),'<textarea name="note" maxlength="2000"></textarea>')}
+      ${field(t('Assessment / Reason To Avoid','評価・使用禁止の理由'),`<textarea name="note" maxlength="2000">${esc(saved.note||'')}</textarea>`)}
       <div class="notice warning">${t('This app does not diagnose or grade complications automatically. Significant or worsening findings require the treating team’s assessment; do not wait for a countdown.','このアプリは所見の診断や程度判定を自動で行いません。重大・悪化する所見は医療チームで評価し、カウントダウンの終了を待たないでください。')}</div>`,onOpen:form=>{
-        $('input[name=radius]',form).addEventListener('input',e=>{const n=Number(e.target.value);if(n>=.3&&n<=15){w.draft.radius=n;draw();}});
+        const x=$('[name=width_cm]',form),y=$('[name=height_cm]',form);
+        if(saved.severity)$('[name=severity]',form).value=saved.severity;
+        const preview=()=>{if(!x.validity.valid||!y.validity.valid)return;w.draft.width_cm=Number(x.value);w.draft.height_cm=Number(y.value);const scale=72/Math.max(w.draft.width_cm,w.draft.height_cm);$('#spot-ellipse',form).setAttribute('rx',w.draft.width_cm*scale/2);$('#spot-ellipse',form).setAttribute('ry',w.draft.height_cm*scale/2);$('#spot-size',form).textContent=`${x.value} × ${y.value} cm`;draw();};
+        x.addEventListener('input',()=>{if(!independentY)y.value=x.value;preview();});y.addEventListener('input',()=>{independentY=true;preview();});preview();
+        $('#draw-spot',form).addEventListener('click',()=>{const f=new FormData(form);w.alertForm={...Object.fromEntries(f),types:f.getAll('types')};drawing=true;dialog.close();w.mode='drawspot';updateTools();toast(t('Drag from one corner of the spot to the opposite corner.','部位を囲む一方の角から反対の角までドラッグしてください。'));});
       },onSubmit:async f=>{
         const types=f.getAll('types');if(!types.length)throw new Error(t('Select at least one observation type.','所見を1つ以上選択してください。'));
-        await api(`/api/patients/${w.pid}/alerts`,{method:'POST',data:{x:draft.x,y:draft.y,radius:Number(f.get('radius')),types,
+        await api(`/api/patients/${w.pid}/alerts`,{method:'POST',data:{x:draft.x,y:draft.y,width_cm:Number(f.get('width_cm')),height_cm:Number(f.get('height_cm')),types,
           severity:f.get('severity'),observed_at:toISO(f.get('observed_at')),note:f.get('note'),photo_id:w.photo.id,version:w.data.patient.version}});
         w.tab='skin';await reload();toast(t('Skin area blocked until recovery is recorded.','回復確認まで使用不可として記録しました。'));
       }});
-    dialog.addEventListener('close',()=>{w.draft=null;draw();},{once:true});
+    dialog.addEventListener('close',()=>{if(!drawing){w.draft=null;w.alertForm=null;}draw();},{once:true});
   }
   function resolveDialog(alertId){
     const a=w.data.alerts.find(a=>a.id===alertId);

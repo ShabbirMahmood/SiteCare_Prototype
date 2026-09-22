@@ -94,7 +94,8 @@ def test_history_uses_source_photo_layout_and_clock_selects_snapshot(client, pat
 
 
 def test_keep_calibration_reuses_old_photo_and_off_restores_age_limit(client, patient_id, photo_id):
-    assert client.get('/api/settings').json() == {'keep_calibration': False, 'revision': 0}
+    assert client.get('/api/settings').json() == {'keep_calibration': True, 'revision': 0}
+    keep(client, False)
     first_time = system_now()
     assert record(client, patient_id, photo_id, occurred_at=iso(first_time)).status_code == 200
     later = first_time + timedelta(days=3)
@@ -149,12 +150,12 @@ def test_settings_persist_are_isolated_and_invalidate_stale_writes(client, patie
         assert response.json()['keep_calibration']
         assert response.headers['X-SiteCare-Keep-Calibration'] == '1'
     with TestClient(create_app(tmp_path / 'separate', testing=True)) as separate:
-        assert not separate.get('/api/bootstrap').json()['settings']['keep_calibration']
+        assert separate.get('/api/bootstrap').json()['settings']['keep_calibration']
     entry = next(a for a in client.get('/api/audit').json()['items'] if a['action'] == 'settings.changed')
-    assert not entry['detail']['before']['keep_calibration'] and entry['detail']['after']['keep_calibration']
+    assert entry['detail']['before']['keep_calibration'] and entry['detail']['after']['keep_calibration']
 
 
-def test_keep_calibration_requires_admin_and_csrf(client):
+def test_keep_calibration_available_to_nurses_and_requires_csrf(client):
     data = {'keep_calibration': True, 'revision': 0}
     assert client.post('/api/settings', json=data, headers={'x-csrf-token': 'wrong'}).status_code == 403
     assert client.post('/api/settings', json={'keep_calibration': 'true', 'revision': 0}).status_code == 400
@@ -165,7 +166,7 @@ def test_keep_calibration_requires_admin_and_csrf(client):
         response = nurse.post('/api/login', json={'username': 'nurse', 'password': 'Synthetic-nurse-123'})
         nurse.headers['x-csrf-token'] = response.json()['csrf']
         assert nurse.get('/api/settings').status_code == 200
-        assert nurse.post('/api/settings', json=data).status_code == 403
+        assert nurse.post('/api/settings', json=data).status_code == 200
 
 
 def test_existing_database_gets_photo_snapshots_without_changing_history(client, patient_id, photo_id):
@@ -179,7 +180,7 @@ def test_existing_database_gets_photo_snapshots_without_changing_history(client,
     after = state(client, patient_id)
     assert after['events'] == before['events']
     assert after['photos'][0]['sites'] == default_sites()
-    assert not client.get('/api/settings').json()['keep_calibration']
+    assert client.get('/api/settings').json()['keep_calibration']
     # Reopening must not overwrite a photo's already saved snapshot.
     with transaction(folder, True) as db:
         db.execute('UPDATE sites SET y=-8 WHERE patient_id=? AND number=1', (patient_id,))

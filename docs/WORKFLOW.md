@@ -1,3 +1,5 @@
+> Current dosage, ellipse, appointment and Patient Record instructions: [Bilingual Feature Guide](PATIENT_RECORDS.md). Retention and deletion: [Data Policy](DATA_POLICY.md).
+
 # SiteCare demonstration workflow
 
 This guide describes the prototype interface, not a clinical procedure. Use fictional data to evaluate it. Confirm any proposed clinical workflow with the responsible team.
@@ -12,9 +14,9 @@ The initial 14 positions reproduce the numbering arrangement of the supplied rot
 
 ### Editing or restoring the 14-site layout
 
-With an editable photo open, choose **Edit 14 Sites** and drag the numbered circles. The controls below the map are:
+With an editable photo open, choose **Edit Sites** and drag the numbered circles. The controls below the map are:
 
-- **Save 14-Site Layout** (red): save the dragged positions. The server checks numbering, the 5 cm navel distance, and 2.5 cm spacing between sites.
+- **Save Site Layout** (red): save the dragged positions. The server checks numbering, the 5 cm navel distance, and 2.5 cm spacing between sites.
 - **Default Layout** (blue): immediately restore and save all 14 original positions. No additional Save click is needed. Photo alignment and its unsaved adjustments are kept.
 - **Discard Changes** (yellow): restore the last saved layout and photo alignment, discarding unsaved edits. This does not undo a layout already saved by either of the other buttons.
 
@@ -42,7 +44,7 @@ After the actual procedure has been completed under the appropriate clinical wor
 
 A saved event restricts its assigned numbered site for 12 days from the recorded time. It also restricts any candidate less than 2.5 cm from a puncture recorded within the preceding 12 days, even if the candidate has a different number. The navel-exclusion check requires at least 5 cm from the mapped navel. These values implement the supplied project brief and need protocol confirmation before a clinical pilot.
 
-The next due date/time becomes the latest actual puncture timestamp plus 72 hours. An alignment referenced by saved records is locked. New photographs can still be uploaded and aligned at subsequent visits.
+The next due date/time follows the patient’s Appointment preference: Count Days (initially 3) or the next selected weekday after the latest puncture. An alignment referenced by saved records is locked. New photographs can still be uploaded and aligned at subsequent visits.
 
 Historical documentation is a separate action. It exists to preserve factual records of previous events, not to override restrictions prospectively. Incorrect puncture entries can be voided by an administrator with a reason; the original entry remains in history. Never void a genuine event to make a resting site appear available.
 
@@ -76,7 +78,7 @@ Candidates follow numbered rotation after the most recent applicable puncture, s
 
 ## Reuse calibration across demonstration visits
 
-Administrators can select **Keep Calibration** to the right of **Change Date**. It is off by default and is shared across patients and users. The choice is saved in the database and included in complete backups.
+Nurses and administrators can select **Keep Calibration** at the top of the page. It is on by default and is shared across patients and users. The choice is saved in the database and included in complete backups.
 
 1. Calibrate and verify a photo normally.
 2. Enable **Keep Calibration** before advancing to a later demonstration date.

@@ -1,12 +1,12 @@
 # SiteCare Technical Architecture
 
-Implementation reference for the current local prototype, reviewed against the source on **2026-09-20**.
+Implementation reference for the current local prototype, reviewed against the source on **2026-09-23**.
 
 [Project Overview](README.md) · [User Manual](user_manual.md) · [Setup Instructions](setup_instruction.md)
 
 ## 1. System Purpose and Boundaries
 
-SiteCare documents puncture sites on an abdominal photograph. A persistent patient-relative map holds 14 numbered positions, exact puncture points, and circular skin observations. The application screens possible positions against recorded restrictions and proposes future visits.
+SiteCare documents puncture sites on an abdominal photograph. A persistent patient-relative map holds 14 numbered positions, exact puncture points, and circular or elliptical skin observations. The application screens possible positions against recorded restrictions and proposes future visits.
 
 It is a **single-computer web application**: a Python process serves a browser interface and owns local storage. Multiple accounts and browser windows can use the same installation, but this is not a distributed or cloud system. The standard launcher exposes only `127.0.0.1`.
 
@@ -42,6 +42,9 @@ flowchart TB
     App --> Settings["settings.py: Retained Calibration Policy"]
     Rules --> Settings
     App --> Security["security.py: Credential Helpers"]
+    App --> RecordRoutes["record_routes.py: Preferences, Reports, Corrections"]
+    RecordRoutes --> Reports["records.py: Dosage, Appointment Rules, Aggregation"]
+    Reports --> Storage
     App --> Rules["rules.py: Geometry and Screening"]
     App --> Storage["storage.py: Transactions and Backups"]
     App --> Pillow["Pillow: Photo Processing"]
@@ -88,6 +91,8 @@ SiteCare_Prototype/
 │   ├── __init__.py                Application version
 │   ├── app.py                     Application factory and API workflows
 │   ├── storage.py                 SQLite schema, transactions, files, backups
+│   ├── records.py                 Dosage defaults, appointment rules, reports, audit summaries
+│   ├── record_routes.py           Preferences, reports, snapshots, correction and deletion APIs
 │   ├── rules.py                   Coordinates, screening, candidates
 │   ├── clock.py                   System and demonstration time
 │   ├── settings.py                Request-scoped calibration policy and settings reads
@@ -97,6 +102,8 @@ SiteCare_Prototype/
 │   └── index.html                 Browser entry document
 ├── static/
 │   ├── app.js                     Pages, navigation and account/patient forms
+│   ├── patient-options.js         Dosage and appointment preference forms
+│   ├── patient-records.js         Charts, photo history and record management
 │   ├── workspace.js               Interactive photo and site workspace
 │   ├── ui.js                      Shared API, language, date and dialog helpers
 │   ├── clock-ui.js                Clock indicator and date-change dialog
@@ -153,7 +160,7 @@ flowchart LR
 | `app.js` | Hash routes for overview, patients, appointments, audit, settings, help and `patient/{id}`. Mounts/disposes the photo workspace and coordinates shared clock/settings refresh. |
 | `workspace.js` | SVG rendering, drag/pan/zoom, ruler and exact-point tools, draft geometry, site tabs, upload/record/recovery dialogs, and save/reset operations. |
 | `ui.js` | Shared `state`, `t()`, `api()`, `appNow()`, DOM/escaping helpers, dialogs, status labels, countdowns, and JST formatting. |
-| `clock-ui.js` | Displays the effective date, the administrator’s system/manual clock form and Keep Calibration checkbox, and the active photo policy. |
+| `clock-ui.js` | Displays the effective date, the administrator’s system/manual clock form and the shared Keep Calibration checkbox, and the active photo policy. |
 
 ## 5. Database Design
 
@@ -181,7 +188,7 @@ data/
 - Initialization enables **write-ahead logging (WAL)**, allowing readers and a writer to cooperate more effectively. SQLite still serializes writes.
 - `transaction(data_dir, write=True)` starts `BEGIN IMMEDIATE`, then commits or rolls back and always closes the connection.
 - SQL values use placeholders. The table names used for ID allocation come from an explicit internal allowlist.
-- `schema_info.version` is currently `1`. Startup creates missing declared tables and rejects unsupported schema versions. It also checks `PRAGMA table_info(photos)`, adds `sites_json` if absent, and fills only null snapshots from that patient’s existing `sites`. Earlier versions froze the patient layout after records, so this preserves their geometry. Repeated startup never overwrites an existing snapshot. There is no general versioned migration framework for arbitrary future schema changes.
+- `schema_info.version` is currently `2`; startup upgrades version 1 additively and rejects other versions. Startup creates missing declared tables and rejects unsupported schema versions. It also checks `PRAGMA table_info(photos)`, adds `sites_json` if absent, and fills only null snapshots from that patient’s existing `sites`. Earlier versions froze the patient layout after records, so this preserves their geometry. Repeated startup never overwrites an existing snapshot. The version-2 migration adds dosage and appointment preferences, nullable per-event rates, full ellipse dimensions, logical deletion fields, patient-code audit snapshots and record revisions. Existing circular geometry is preserved as equal diameters; old dosage stays unknown. The upgrade enables Keep Calibration once, preserving later choices. Earlier combined pain/tenderness entries retain a legacy label.
 
 ### Relationship map
 
@@ -193,6 +200,7 @@ erDiagram
     patients ||--o{ events : records
     patients ||--o{ complications : records
     patients ||--o{ reviews : retains
+    patients ||--o{ record_revisions : tracks
     patients ||--o| appointments : schedules
     photos ||--o{ events : documents
     photos ||--o{ complications : documents
@@ -206,7 +214,7 @@ The diagram shows authenticated sessions; a bootstrap session may have no user y
 | --- | --- | --- |
 | `schema_info` | `version` | Database-format compatibility marker. |
 | `app_clock` | Singleton `id=1`; `offset_seconds`, `selected_at`, `revision` | Persisted system/manual mode and concurrency revision. A null offset means system mode. |
-| `app_settings` | Singleton `id=1`; boolean `keep_calibration`, `revision` | Installation-wide photo reuse policy, off by default, with optimistic concurrency. |
+| `app_settings` | Singleton `id=1`; boolean `keep_calibration`, `revision` | Installation-wide photo reuse policy, on by default, with optimistic concurrency. |
 | `id_sequences` | `name` primary key; `last_id` | Persistent high-water marks for patient, photo, event and complication IDs. Prevents reuse after deletion. |
 | `pending_photo_deletions` | `filename` primary key | Durable queue for physical cleanup after committed patient deletion. |
 | `users` | `id`; unique `username`; `display_name`, `password_hash`, `role`, `created_at` | Named local accounts; role is `admin` or `nurse`. |
@@ -215,7 +223,8 @@ The diagram shows authenticated sessions; a bootstrap session may have no user y
 | `sites` | Composite key `(patient_id, number)`; `x`, `y` | The latest saved patient layout template in centimetres. Each photo holds its own authoritative copy in `sites_json`. |
 | `photos` | `id`, `patient_id`; unique `filename`; dimensions, capture/upload times, `alignment_json`, `sites_json`, verification fields, `locked`, `demo` | Photo metadata and saved geometry. Image data itself stays on disk. |
 | `events` | `id`, `patient_id`, `photo_id`, `site_number`, `x`, `y`; occurrence/record times, actor, kind, note, exception/warnings, alignment snapshot, unique `request_key`, void fields | Exact puncture records, including history entries and retained corrections. |
-| `complications` | `id`, `patient_id`, `photo_id`, `site_number`, centre/radius, types, severity, observation/record times, actor/note, alignment snapshot, resolution fields | Circular skin observations and explicit recovery. The database name is `complications`; the interface calls these skin alerts. |
+| `complications` | `id`, `patient_id`, `photo_id`, `site_number`, centre, width_cm, height_cm, legacy radius, types, severity, observation/record times, actor/note, alignment snapshot, resolution fields | Elliptical skin observations, explicit recovery and logical deletion. The database name is `complications`; the interface calls these skin alerts. |
+| `record_revisions` | `patient_id`, `record_type`, `record_id`, `changed_at`, `actor`, `reason`, `before_json`, `after_json` | Atomic before/after snapshots for administrator corrections and logical deletion. |
 | `reviews` | Composite key `(patient_id, site_number)`; alert boundary, time, actor and note | Retained recurrence-review data. Current screening never uses it to impose an additional hold. |
 | `appointments` | `patient_id` primary key; `due_at`, `scheduled_at`, `status`, `reason`, `updated_at` | One current appointment row per patient; due time and confirmed time remain distinct. |
 | `audit` | `id`, `at`, `actor`, optional `patient_id`, `action`, `entity`, `detail_json` | Chronological mutation/export records, including before/after details where provided. |
@@ -278,7 +287,7 @@ Two-dimensional ruler calibration cannot establish real skin-surface distances u
 | Numbered-site rest | An applicable puncture blocks reuse of its assigned number for 12 × 24 hours. |
 | Exact-point spacing | A point less than 2.5 cm from any applicable puncture within that rest window is restricted, including punctures assigned to other numbers. |
 | Navel exclusion | Points less than 5 cm from the navel are blocked. |
-| Active skin area | A point inside an unresolved circular observation is blocked. The circle, not just its assigned number, determines affected points. |
+| Active skin area | A point inside an unresolved ellipse is blocked. Its full width/height and centre determine containment, including when width equals height. |
 | Photo boundaries | A point outside the mapped image is blocked. |
 | Photo readiness | Current screening needs calibrated, verified geometry and a non-future capture time. The 24-hour upper age limit applies only while Keep Calibration is off. |
 | Recurrence | Related observations within 90 days remain informational. `needs_review` is always false. |
@@ -306,7 +315,7 @@ Custom layout saves validate exactly one of each number 1–14, coordinate bound
 
 **Default Layout** submits `reset_to_default: true` with the current patient version and photo ID to the same layout endpoint. The server calls `default_sites()`, applies the same validation/record lock, saves positions in the current photo snapshot and patient template, bumps the version, and audits `layout.reset_to_default` with before/after coordinates and the photo ID. Earlier photos retain their snapshots. A request cannot specify both reset and custom sites.
 
-The browser immediately reloads the saved layout and clears a selected old point. Unsaved photo alignment is retained. **Save 14-Site Layout** saves custom coordinates; **Discard Changes** reloads the last saved layout and alignment. A saved reset is not an unsaved edit and is not undone by Discard Changes.
+The browser immediately reloads the saved layout and clears a selected old point. Unsaved photo alignment is retained. **Save Site Layout** saves custom coordinates; **Discard Changes** reloads the last saved layout and alignment. A saved reset is not an unsaved edit and is not undone by Discard Changes.
 
 ### Recording a puncture
 
@@ -336,7 +345,7 @@ sequenceDiagram
     end
 ```
 
-New-procedure entries require an active patient, latest applicable current photo, verified calibration, a recent non-future occurrence time, appropriate photo/occurrence ordering, explicit confirmations and an eligible exact point. When Keep Calibration is off, a photo cannot receive a second non-voided new-procedure record. When enabled, the latest verified photo may support later procedures without another upload, while each submitted point/time still undergoes full validation. Out-of-order or older entries use history mode.
+New-procedure entries require an active patient, latest applicable current photo, verified calibration, a recent non-future occurrence time, appropriate photo/occurrence ordering, one patient-identity confirmation and an eligible exact point. When Keep Calibration is off, a photo cannot receive a second non-voided new-procedure record. When enabled, the latest verified photo may support later procedures without another upload, while each submitted point/time still undergoes full validation. Out-of-order or older entries use history mode.
 
 Historical mode still requires a calibrated and verified source photo and an explanation of at least eight characters. It documents an already-performed procedure; screening conflicts are stored as warnings rather than silently discarded.
 
@@ -344,15 +353,15 @@ The unique request key makes repeated submissions return the existing event inst
 
 ### Skin alert and recovery
 
-An alert stores a centre, radius, observation types, severity, observed/recorded times, note, actor and photo-alignment snapshot. Its radius is 0.3–15 cm. Marking an alert requires the latest current, calibrated photo and locks that photo’s alignment and numbered layout.
+An alert stores its centre, full `width_cm`/`height_cm`, observation types, severity, observed/recorded times, note, actor and photo-alignment snapshot. Each diameter is 0.01–30 cm; the UI starts at 0.30 cm. The legacy radius is retained as half the larger diameter for compatibility, but screening uses the actual ellipse equation. Pain and Tenderness are independent types. Marking an alert requires the latest current, calibrated photo and locks that photo’s alignment and numbered layout.
 
 Recovery requires an explicit confirmation and assessment note. It sets `resolved_at`, `resolved_by` and `resolution_note`, increments the patient version, and audits the change. The next workspace response recalculates candidates immediately. Time passing alone does not resolve an alert. The recurrence review table/endpoint remains for compatibility and documentation but no longer imposes a restriction.
 
 ### Appointments
 
-The due time is the latest applicable puncture plus 72 hours, or the patient's `start_at` when none applies. `due_at` is the calculated target; `scheduled_at` is the proposed/confirmed visit time. Changing the schedule requires an explanation when it differs from the due time and does not erase overdue status.
+The due time follows patient preferences: latest applicable puncture plus `appointment_days` (default 3), or the nearest selected weekday strictly after that puncture’s JST calendar date, preserving time of day. Before the first puncture, `start_at` anchors the first appointment; weekday mode advances it to an allowed weekday if necessary. `due_at` is the calculated target; `scheduled_at` is the proposed/confirmed visit time. Changing the schedule requires an explanation when it differs from the due time and does not erase overdue status.
 
-The calendar derives three-day projections at request time. Projections are not individual database bookings, and the application does not send email, SMS, or scheduled reminders. Clock previews use `effective_appointment()` so simply viewing another date does not overwrite an existing confirmation.
+The calendar returns exactly one next appointment per active patient plus completed punctures in its date grid. It generates no recurring projections. Saving appointment preferences replaces the prior confirmation with a recalculated suggestion. The application does not send email, SMS, or scheduled reminders. Clock previews use `effective_appointment()` so simply viewing another date does not overwrite an existing confirmation.
 
 ### Administrator patient deletion
 
@@ -389,7 +398,7 @@ This is an as-of calculation over current stored records, **not a complete histo
 
 ### Keep Calibration and cross-window consistency
 
-The singleton `app_settings` row stores `keep_calibration` and `revision`. The default is false. An administrator changes it using the checkbox immediately to the right of Change Date. The active policy is also described to nurse accounts, which cannot change it.
+The singleton `app_settings` row stores `keep_calibration` and `revision`. The default is true. Nurses and administrators can change it using the top checkbox. The setting is shared across this installation; Change Date remains administrator-only.
 
 | Keep Calibration | Age check | Procedure reuse | Geometry edits |
 | --- | --- | --- | --- |
@@ -400,7 +409,7 @@ Both modes require verified ruler calibration. Uploading a different image alway
 
 For every request, middleware reads settings alongside the clock, installs `keep_calibration` in a ContextVar, and resets it in `finally`. Request-local context prevents settings leaking between separate installations in the same Python process. `photo_ready()` is the shared rule entry point, so workspace candidates, summaries, point screening and record validations use the same policy.
 
-`POST /api/settings` requires administrator authorization, CSRF, a strict boolean and the current settings revision. In one transaction it saves the setting, increments its revision and all patient versions, and writes a `settings.changed` audit entry. The normal SQLite backup includes the settings automatically.
+`POST /api/settings` requires a signed-in nurse or administrator, CSRF, a strict boolean and the current settings revision. In one transaction it saves the setting, increments its revision and all patient versions, and writes a `settings.changed` audit entry. The normal SQLite backup includes the settings automatically.
 
 Responses carry `X-SiteCare-Keep-Calibration` and `X-SiteCare-Settings-Revision`. Browser writes send `X-Settings-Revision`, and open dialogs preserve the revision from when they opened. Supplied stale revisions receive HTTP 409. Updating patient versions also rejects older patient writes that omit the settings header.
 
@@ -417,7 +426,7 @@ All paths below are relative to the local server. Patient mutations generally su
 | `POST /api/setup` | Initial bootstrap session only | Create the first administrator; rejected once accounts exist |
 | `POST /api/login`, `/api/logout`, `/api/heartbeat` | Session rules appropriate to operation | Authentication, sign-out and explicit activity |
 | `GET /api/clock` / `POST /api/clock` | Signed in / admin | Read or change the installation clock |
-| `GET /api/settings` / `POST /api/settings` | Signed in / admin | Read or change Keep Calibration with a settings revision |
+| `GET /api/settings` / `POST /api/settings` | Signed in | Read or change Keep Calibration with a settings revision |
 | `GET`, `POST /api/patients` | Signed in | List summaries or create a patient |
 | `GET`, `PATCH /api/patients/{id}` | Signed in | Workspace data or profile update |
 | `DELETE /api/patients/{id}` | Admin | Confirmed permanent patient deletion |
@@ -428,11 +437,11 @@ All paths below are relative to the local server. Patient mutations generally su
 | `POST /api/patients/{id}/screen-point` | Signed in | Screen an exact point using its source photo layout without recording a puncture |
 | `POST /api/patients/{id}/events` | Signed in | Record a new procedure or historical puncture |
 | `POST /api/events/{id}/void` | Admin | Retain and void an incorrect event |
-| `POST /api/patients/{id}/alerts` | Signed in | Record a circular skin observation |
+| `POST /api/patients/{id}/alerts` | Signed in | Record a circular or elliptical skin observation |
 | `POST /api/alerts/{id}/resolve` | Signed in | Confirm full recovery |
 | `POST /api/patients/{id}/reviews` | Signed in | Retain a recurrence assessment note |
 | `POST /api/patients/{id}/appointment` | Signed in | Confirm/change a visit time |
-| `GET /api/appointments?month=YYYY-MM` | Signed in | Calendar entries and projections |
+| `GET /api/appointments?month=YYYY-MM` | Signed in | One next appointment per active patient and completed entries |
 | `GET /api/patients/{id}/export.csv` | Signed in | Patient puncture/skin export with an audit entry |
 | `GET /api/audit` | Admin | Latest 200 entries; optional patient filter |
 | `GET`, `POST /api/users` | Admin | List/create nurse or administrator accounts |
@@ -517,6 +526,55 @@ Backend edits require a server restart; static edits require a browser refresh. 
 
 ## 15. Known Boundaries
 
-The application does not provide automatic anatomical tracking, physical-distance verification, three-dimensional reconstruction, freehand alert polygons, medication/dose decisions, outbound reminders, hospital-record integration or production identity management. Its 12-day rest, 72-hour visit interval, distance rules and photo-freshness limit implement this prototype's configured behavior; they are not established here as clinical recommendations.
+The application does not provide automatic anatomical tracking, physical-distance verification, three-dimensional reconstruction, freehand alert polygons, medication/dose decisions, outbound reminders, hospital-record integration or production identity management. Its 12-day rest, patient-specific visit interval, distance rules and photo-freshness policy implement this prototype's configured behavior; they are not established here as clinical recommendations.
 
 The normal photo-upload path cleans up handled failures, but an abrupt process or machine failure can still leave an unreferenced file; there is no general orphan-file reconciliation service. The demo clock is not a full database time-travel system, and the current schema setup is not a comprehensive migration engine. These constraints should inform any later production redesign.
+
+
+## 15. Patient Options, Reports And Record Management
+
+### Module Connections
+
+`app.js` routes `#records` and `#records/{id}` to `patient-records.js`. The patient workspace imports `patient-options.js` for dosage and appointment forms. Both use the existing `ui.js` authenticated/CSRF request client and bilingual labels. Charts are native SVG with horizontal scrolling, printed values and equivalent tables; no external chart package or network service is required.
+
+`create_app()` registers `record_routes.py` after the core routes. Its handlers use the same authentication helpers, write transactions, clock context, patient version and audit store. `records.py` contains pure reporting/appointment helpers and current dosage selection. `rules.py` owns ellipse containment, so drawing, screening and historical rendering share the same full-diameter representation.
+
+### Dosage Storage And Lifecycle
+
+- Patient fields: `dosage_category`, `dosage_rate`, `dosage_step`, `dosage_reason`, `dosage_pending`.
+- Event fields: nullable `dosage_category`, `dosage_rate`, `dosage_previous_rate`, `dosage_status`, and `dosage_reason`.
+- A preset is independently saved, versioned and audited. Saving it does not create a procedure or graph point.
+- Record submission reads that patient's preset, validates rate/category and requires a reason when the numerical rate changes. It independently compares against the most recent applicable event with a known rate at the entered puncture time. Without a prior known rate, the initial 0.15 mL/h value is the comparison baseline.
+- The puncture and dosage snapshot commit together. The newest applicable saved event becomes the default. Older historical entries do not replace it. Voiding/correcting a current record changes subsequent defaults through the same query.
+- Comparison status is stored as it was recorded, with its comparison rate. Later corrections to an earlier entry do not silently rewrite other entries. The numerical graph uses corrected values.
+- Accepted numeric bounds (0–1000 mL/h; positive step up to 1000) are input-validation bounds, not clinical recommendations. The app does not prescribe a drug, concentration, rate or category.
+
+### Reporting Semantics
+
+`make_report()` first filters events using the application clock, void timestamps, JST reporting period and optional site. Month View returns individual puncture rates. Year View groups by JST month and Total View by JST year, using the arithmetic mean of known recorded rates. Unknown legacy values are counted separately and excluded; explicit zero is included. Tables expose minimum, maximum and sample count. These are not time-weighted means or delivered mL totals: infusion durations, interruptions, concentrations and site-specific start/stop intervals are not recorded.
+
+Skin counts group observations by their assigned nearest site and observation period. Resolved episodes remain in counts; logically deleted episodes are excluded at and after deletion. A single alert counts once, not once per overlapping site or blocked day. The all-site histogram and 14-row summary explain this definition in the UI.
+
+### Historical Photos And Corrections
+
+The snapshot API accepts an explicit timestamp and optional source photo. It selects only photos captured by that timestamp, projects stored coordinates through that photo's saved alignment, and selects alerts observed but not yet recovered/deleted then. These views apply current corrected facts to historical clinical time. They are not a full event-sourced reconstruction of what a user knew at every earlier wall-clock instant.
+
+Administrator edits preserve a full before/after snapshot, time, actor and required reason in `record_revisions`. Record creation and correction keep source image associations. An individual Delete is logical deletion; its row remains accessible. Unused-photo deletion is physical and queues file cleanup; referenced photos are protected even when a related record is voided. Complete patient deletion also removes its revision rows, while retaining installation audit entries.
+
+### Added Endpoints
+
+| Endpoint | Access | Purpose |
+| --- | --- | --- |
+| `POST /api/patients/{id}/dosage` | Signed in | Save patient preset and adjustable step |
+| `GET /api/patients/{id}/dosage-context` | Signed in | Previous rate at an entered timestamp |
+| `POST /api/patients/{id}/appointment-settings` | Signed in | Save one day-count or weekday method |
+| `GET /api/patients/{id}/records` | Signed in | Reports, records, photos, revision index |
+| `GET /api/patients/{id}/snapshot` | Signed in | Photo and regions active at a selected time |
+| `GET /api/patients/{id}/revisions/{revision_id}` | Signed in | Original and corrected record values |
+| `PATCH /api/events/{id}` | Administrator | Correct puncture facts/dosage with a reason |
+| `PATCH /api/alerts/{id}` | Administrator | Correct ellipse, types, date or note |
+| `POST /api/alerts/{id}/void` | Administrator | Logically delete a skin observation |
+| `DELETE /api/photos/{id}` | Administrator | Delete an unused photo |
+| `DELETE /api/users/{id}` | Administrator | Delete a nurse and revoke sessions |
+
+`GET /api/audit` adds `patient_code`, `patient_exists`, `action_label`, `summary` and `changes`. Database IDs remain internal; active patient codes link to Patient Record. Deleted profiles retain their code without a live link. CSV now includes dosage, full alert dimensions, source IDs and deletion information. See [Data Policy](docs/DATA_POLICY.md) for access and retention details.

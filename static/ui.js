@@ -39,6 +39,7 @@ export function countdown(until, now = appNow()) {
 }
 export function icon(name, size = 20) {
   const paths = {
+    records: '<path d="M4 3v18h17M7 15l4-5 4 3 5-7"/><circle cx="7" cy="15" r="1"/><circle cx="11" cy="10" r="1"/><circle cx="15" cy="13" r="1"/><circle cx="20" cy="6" r="1"/>',
     dashboard: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     patients: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m20 0v-2a4 4 0 0 0-3-3.87M15 3.13a4 4 0 0 1 0 7.75"/><circle cx="9" cy="7" r="4"/>',
     calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18m-13 5h2m4 0h2"/>',
@@ -120,12 +121,12 @@ export function openDialog({title, body, submit = t('Save','保存'), onSubmit, 
   return dialog;
 }
 export const typeLabel = type => ({
-  redness: t('Redness','発赤'), hardness:t('Hardening','硬結'), pain:t('Pain / Tenderness','痛み・圧痛'),
+  redness: t('Redness','発赤'), hardness:t('Hardening','硬結'), pain:t('Pain','痛み'), tenderness:t('Tenderness','圧痛'), pain_tenderness_legacy:t('Pain / Tenderness (Earlier Combined Entry)','痛み・圧痛（旧形式の記録）'),
   swelling:t('Swelling','腫脹'), bruising:t('Bruising','皮下出血'), leakage:t('Leakage','液漏れ'), other:t('Other / Avoid Area','その他・使用禁止部位')
 })[type] || type;
 export const roleLabel = role => ({admin:t('Administrator','管理者'),nurse:t('Nurse','看護師')})[role] || role;
 export const severityLabel = severity => ({mild:t('Mild','軽度'),moderate:t('Moderate','中等度'),severe:t('Severe','重度')})[severity] || severity;
-export const statusLabel = value => ({eligible:t('Rule-Eligible','条件適合'),resting:t('Resting','休止中'),blocked:t('Do Not Use','使用不可'),unverified:t('Verify Photo','写真確認待ち')})[value] || value;
+export const statusLabel = value => ({eligible:t('Eligible','条件適合'),resting:t('Resting','休止中'),blocked:t('Blocked','使用不可'),unverified:t('Verify Photo','写真確認待ち')})[value] || value;
 export const badge = (value, label = '') => `<span class="badge ${value}"><span class="status-dot"></span>${label || statusLabel(value)}</span>`;
 export function reasonLabel(reason) {
   switch(reason.code) {

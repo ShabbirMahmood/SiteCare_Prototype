@@ -143,9 +143,9 @@ After backend changes, restart the server; after interface changes, refresh with
 After signing in:
 
 1. Confirm **System Date** shows the expected JST date. The administrator can use **Change Date → Use System Date** to leave a saved demonstration date.
-2. Check **Keep Calibration**, beside Change Date. It is off by default. Turn it on if the demonstration should reuse verified photos beyond 24 hours. It applies to every patient and survives restarts.
+2. Check **Keep Calibration**, beside Change Date. It is on by default and available to nurses and administrators. Leave it on to reuse verified photos beyond 24 hours. It applies to every patient and survives restarts.
 3. Open a patient and inspect **Photo History**. Labels start at **#1** for each patient. An existing patient's next photo continues that patient's sequence.
-4. On a new upload, check **Edit 14 Sites** and the four bottom buttons. Save the layout and verify alignment separately. A previously used photo remains read-only.
+4. On a new upload, check **Edit Sites** and the four bottom buttons. Save the layout and verify alignment separately. A previously used photo remains read-only.
 
 For an existing installation, make a complete backup before updating source files. Stop the server, retain its `data/` folder, then restart with the same data location and refresh the browser with **Ctrl+F5**. Startup automatically adds the settings table and copies each patient's existing layout into their older photos. It preserves photograph IDs, files, records and accounts. It does not remove the database or require you to recreate patients.
 

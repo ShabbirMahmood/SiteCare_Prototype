@@ -51,6 +51,7 @@ def test_api_candidate_recovery_reinserts_fifth_site(client, patient_id, photo_i
 
 
 def test_manual_clock_drives_rest_freshness_calendar_and_reset(client, patient_id, photo_id):
+    client.post("/api/settings", json={"keep_calibration": False, "revision": 0})
     before = system_now()
     assert record(client, patient_id, photo_id, occurred_at=iso(before)).status_code == 200
     d = state(client, patient_id)

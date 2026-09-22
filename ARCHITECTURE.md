@@ -38,6 +38,8 @@ flowchart TD
 | `run.py` | Parses launch options, creates the application, starts Uvicorn, and optionally opens a browser. |
 | `manage.py` | Provides backup, database/image integrity checks, and local password reset. |
 | `sitecare/app.py` | Application factory, middleware, API routes, input validation, authorization, and workflow coordination. |
+| `sitecare/records.py` | Dosage defaults, patient appointment rules, report aggregation and audit summaries. |
+| `sitecare/record_routes.py` | Patient preferences, historical records/photos, corrections and nurse deletion endpoints. |
 | `sitecare/settings.py` | Persisted Keep Calibration policy and request-scoped settings context. |
 | `sitecare/clock.py` | Request-scoped application clock, with separate real time for authentication. |
 | `sitecare/rules.py` | Time and coordinate utilities, site eligibility, rest countdowns, and candidate ranking. |
@@ -105,8 +107,8 @@ erDiagram
 
 | Table | Stored information |
 | --- | --- |
-| `schema_info` | Database schema version, currently 1. |
-| `app_settings` | Singleton Keep Calibration boolean, default false, and settings revision. |
+| `schema_info` | Database schema version, currently 2. |
+| `app_settings` | Singleton Keep Calibration boolean, default true, and settings revision. |
 | `app_clock` | Singleton persisted UTC offset, selected timestamp, and clock revision; null offset means system time. |
 | `id_sequences` | Monotonic record ID counters, preserving identity across patient deletions. |
 | `pending_photo_deletions` | Committed photo-file deletions awaiting cleanup or restart retry. |
@@ -187,7 +189,7 @@ Saved event and alert records contain alignment snapshots. Referenced photo alig
 
 `POST /api/patients/{patient_id}/layout` accepts either `sites` for a custom layout or `reset_to_default: true` with the current patient `version` and `photo_id`. The reset obtains its coordinates directly from `rules.default_sites()`, validates them through the same path as custom layouts, and applies the same record lock and version checks. The transaction updates the current unlocked photo snapshot, patient layout template and patient version, and writes `layout.reset_to_default` with before/after coordinates. It does not change photo alignment.
 
-The workspace's blue **Default Layout** button saves this reset immediately, reloads the map, clears any selected old point, and retains unsaved photo alignment. Red **Save 14-Site Layout** saves custom positions; yellow **Discard Changes** reloads the last saved layout and alignment.
+The workspace's blue **Default Layout** button saves this reset immediately, reloads the map, clears any selected old point, and retains unsaved photo alignment. Red **Save Site Layout** saves custom positions; yellow **Discard Changes** reloads the last saved layout and alignment.
 
 English interface labels use a capital initial for each word, including words joined by hyphens. Keep this convention for new buttons, options, headings, tabs, statuses, field labels and accessible names. Write these labels explicitly in the translation source so screen readers receive the same wording; do not apply case conversion to patient-entered data or stored values. Preserve acronyms such as ID, CSV and JST and measurement symbols such as cm and px. Japanese translations and explanatory prose retain their usual casing. Map notice labels use 12px text (11px at the small-screen breakpoint).
 
@@ -195,7 +197,7 @@ English interface labels use a capital initial for each word, including words jo
 
 Alert resolution records explicit recovery confirmation, an assessment note, actor, and timestamp, then increments the patient version and writes an audit entry. The next workspace response recalculates eligibility without a recurrence hold.
 
-Appointment due time is the latest non-voided puncture time plus 72 hours, or the patient's initial due time when no puncture exists. Confirming a different scheduled time requires a reason and preserves the calculated due time. Calendar projections are generated at three-day intervals; they are not separate confirmed bookings or outbound reminders.
+Appointment due time follows each patient's day-count (default 3) or selected weekday preference. The latest applicable puncture anchors follow-up; the initial due time anchors the first visit. Confirming a different scheduled time requires a reason and preserves the calculated due time. The calendar shows one next appointment per active patient and completed punctures; no recurring projections are generated.
 
 ## 9. Security and consistency
 
@@ -268,10 +270,15 @@ Backup creation holds a database write lock while taking a snapshot and copying 
 
 ## 14. Per-Patient Photo Numbers and Keep Calibration
 
-Photo labels represent upload order within a patient, starting at #1. For example, that patient's global photo IDs 3, 8 and 18 display as #1, #2 and #3. Internal IDs remain unchanged for source-photo URLs and records. Switching photos displays their own saved layouts; each fresh upload enables Edit 14 Sites and the four bottom controls.
+Photo labels represent upload order within a patient, starting at #1. For example, that patient's global photo IDs 3, 8 and 18 display as #1, #2 and #3. Internal IDs remain unchanged for source-photo URLs and records. Switching photos displays their own saved layouts; each fresh upload enables Edit Sites and the four bottom controls.
 
-The administrator's Keep Calibration checkbox is directly beside Change Date and applies to the entire installation. Checked allows the latest verified image to remain usable beyond 24 hours and for later procedures. Unchecked immediately restores the capture-time age limit and the one-procedure-per-photo requirement. Its default is unchecked, and SQLite persists it across restarts. New uploads always require their own calibration, even when it is enabled.
+The Keep Calibration checkbox is available to nurses and administrators at the top of the page and applies to the entire installation. Checked allows the latest verified image to remain usable beyond 24 hours and for later procedures. Unchecked immediately restores the capture-time age limit and the one-procedure-per-photo requirement. Its default is checked, and SQLite persists it across restarts. New uploads always require their own calibration, even when it is enabled.
 
 Middleware uses a ContextVar for request-local policy isolation. Settings responses expose the flag and revision through headers. Browser writes carry `X-Settings-Revision`; stale revisions receive HTTP 409. Changes also increment every patient version, create an audit entry, and trigger view refresh through polling and cross-tab notification. Open forms and unsaved drafts are preserved until refreshed. Site rest, geometry, skin alerts and other checks remain in force.
 
 The detailed current reference is [technical_architecture.md](technical_architecture.md). The updated tests in `tests/test_photo_workflow.py` cover per-patient numbering, historical snapshot preservation, source-photo assignment, policy toggling, permissions, restart persistence, installation isolation, concurrency and migration.
+
+
+## Patient Records Update — 23 September 2026
+
+Schema version 2 adds per-patient dosage and appointment preferences, dosage snapshots on punctures, elliptical alert dimensions, retained record revisions and patient codes in audit entries. `static/patient-options.js` implements the new forms; `static/patient-records.js` provides monthly/yearly/total flow-rate reports, site filters, trouble counts and historical photo views. Both nurses and administrators can use Keep Calibration, enabled by default. See [Technical Architecture, Section 15](technical_architecture.md#15-patient-options-reports-and-record-management) and [Data Policy](docs/DATA_POLICY.md) for the current detailed behavior.

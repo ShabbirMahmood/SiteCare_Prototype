@@ -1,6 +1,8 @@
 # SiteCare User Manual / 操作マニュアル
 
-[Setup Instructions](setup_instruction.md) · [Project Overview](README.md)
+[Setup Instructions](setup_instruction.md) · [Project Overview](README.md) · [Detailed Bilingual Patient Options Guide](docs/PATIENT_RECORDS.md) · [Storage Policy](docs/DATA_POLICY.md)
+
+Updated: 23 September 2026 / 更新日：2026年9月23日
 
 ## English
 
@@ -13,7 +15,7 @@ Start SiteCare and open [http://127.0.0.1:8000](http://127.0.0.1:8000/). Sign in
 1. Choose **Patients → Create Patient**, or open an existing patient.
 2. Choose **New Visit Photo** and upload a JPEG/PNG with the correct capture time. Include the navel and a measured ruler.
 3. Use **Navel**, **Move Photo**, **Photo Size**, and **Photo Rotation** to align the photo.
-4. Use **Ruler**: select two ruler marks and enter their actual distance in cm.
+4. Use **Calibrate**: select two ruler marks and enter their actual distance in cm.
 5. Complete **Verify & Save Alignment**. Each new photo needs calibration and verification.
 
 The photo selector counts uploads separately for each patient: **#1 → #2 → #3**. Switching photos displays the saved layout of that image. A high number previously shown by the application was its shared database ID, not the patient’s visit count.
@@ -22,12 +24,12 @@ For practice, an administrator can use **Load Demo** or **Settings & Data → Lo
 
 ### 3. Edit the numbered layout
 
-For **each new photo**, choose **Edit 14 Sites** and drag the circles before recording a puncture or skin observation on that photo. Earlier records for the same patient do not prevent editing the new image. Keep centres at least 5 cm from the navel and 2.5 cm apart.
+For **each new photo**, choose **Edit Sites** and drag the circles before recording a puncture or skin observation on that photo. Earlier records for the same patient do not prevent editing the new image. Keep centres at least 5 cm from the navel and 2.5 cm apart.
 
 | Button | Action |
 | --- | --- |
 | **Verify & Save Alignment** — green | Save the ruler calibration and verified photo alignment. |
-| **Save 14-Site Layout** — red | Save the dragged positions. |
+| **Save Site Layout** — red | Save the dragged positions. |
 | **Default Layout** — blue | Immediately restore and save all original positions; retain photo-alignment edits. |
 | **Discard Changes** — yellow | Return to the last saved layout and alignment. It does not undo an already saved reset. |
 
@@ -36,19 +38,19 @@ Layout changes and photo alignment are saved separately. All four controls remai
 ### 4. Review and record
 
 - Select a numbered site, candidate, or **Site Status** row to see its details.
-- **Green:** rule-eligible. **Blue:** resting. **Red:** blocked. **Gray:** photo verification needed.
-- Use **Exact Point** to select the actual location, then **Record Completed Puncture** with its actual time and confirmations.
+- **Green:** eligible. **Blue:** resting. **Red:** blocked. **Gray:** photo verification needed.
+- Use **Exact Point** to select the actual location, then **Record Completed Puncture** with its actual time, preset dosage and the patient-identity confirmation.
 - Use **Add Historical Record** for an older completed procedure; provide an explanation.
 - Use **Draw Alert** to mark a skin concern. In **Skin Alerts**, choose **Confirm Full Recovery**, enter the assessment, and save when recovery has been confirmed.
 
 Recovery clears that alert immediately. No additional recurring-episode review is required. Other active alerts, rest, spacing, and photo checks can still exclude the site. Eligible sites rejoin the numbered candidate order immediately.
 
-### 5. Keep Calibration — administrator
+### 5. Keep Calibration — nurses and administrators
 
-Use **Keep Calibration** immediately to the right of **Change Date** at the top of the page. The setting is shared by all patients and users and is remembered after restarting SiteCare.
+Nurses and administrators can use **Keep Calibration** at the top of the page. It is enabled by default. The setting is shared by all patients and users and is remembered after restarting SiteCare.
 
-- **Unchecked (default):** a photo older than 24 hours at the application date cannot be used for new screening/records. Upload a new photo, calibrate with the ruler, and verify alignment. A photo already used for a non-voided procedure also requires a new visit photo in this mode.
-- **Checked:** continue using the latest calibrated and verified photo after 24 hours, including for later procedures. You do not need to upload or recalibrate just because time has passed.
+- **Unchecked:** a photo older than 24 hours at the application date cannot be used for new screening/records. Upload a new photo, calibrate with the ruler, and verify alignment. A photo already used for a non-voided procedure also requires a new visit photo in this mode.
+- **Checked (default):** continue using the latest calibrated and verified photo after 24 hours, including for later procedures. You do not need to upload or recalibrate just because time has passed.
 - **Unchecked again:** the 24-hour limit applies immediately, measured from the original capture time. This does not give the old photo another 24 hours, erase its calibration, or delete records.
 - **Whenever you upload another photo:** calibrate and verify that new image. This option does not transfer calibration from one image to another or unlock an image already used by records.
 
@@ -58,13 +60,23 @@ Other open windows pick up the setting automatically. If you have an open form o
 
 ### 6. Dates, appointments, and administration
 
-- **Appointments:** review suggested visits and use **Confirm / Change** to confirm a time. The usual suggestion is 72 hours after the latest applicable puncture.
+- **Appointments:** review suggested visits and use **Confirm / Change** to confirm a time. Use the workspace **Appointment** button to choose Count Days (default 3) or selected weekdays. Only the next appointment is suggested; the two methods are exclusive.
 - **Change Date** (administrator): choose a demonstration date or **Use System Date**, then **Apply Date**. The selected clock is shared across patients and windows and continues running. All workflow dates use JST.
 - **Profile → Delete Patient…** (administrator): review the summary, type the exact patient ID, and choose **Delete Permanently**. There is no in-app undo; audit history and previous backups remain.
 - **Settings & Data → Download Complete Backup** (administrator): save a database-and-photos backup. Patient **CSV** export is not a full backup.
 - Finish saving, sign out if needed, and press **Ctrl+C** in the server terminal to stop. Closing the browser alone does not stop the server.
 
 **If a control is unavailable:** use the latest photo, verify alignment, and resolve the stated restriction. When Keep Calibration is off, a new-procedure photo must be within 24 hours of the application clock. Upload a new photo when a saved record has locked the old photo's alignment.
+
+### 7. Dosage, Alert Dimensions And Patient Record
+
+- **Drug Dosage:** select Higher, Standard or Lower; set the rate (initially 0.15 mL/h) and +/- step (initially 0.01 mL/h). Changes require a reason. Blue means Increased, yellow Decreased, green Unchanged. A saved puncture records the preset and makes it the next patient default.
+- **Draw Alert:** click the centre. Width and height start at 0.30 cm; height follows width until explicitly edited. Blue **Draw Spot** measures an ellipse from a dragged bounding box. Pain and Tenderness are separate.
+- **Patient Record:** search and open a patient. Month View shows each recorded flow rate; Year/Total views show monthly/yearly averages in mL/h. Choose any of the 14 sites, review tables and trouble counts, or select a photo date in Photo History.
+- **Manage Records:** administrators can edit or delete individual records with a reason. Deleted entries remain available with Include Deleted Entries, and corrections retain before/after values. Only unused photos can be separately removed. Add new/historical records from the patient workspace.
+- **Settings & Data → Nurse Accounts → Delete Nurse:** administrators can delete a nurse's login and sessions while keeping their signed records.
+
+See the [bilingual step-by-step guide](docs/PATIENT_RECORDS.md) and [storage policy](docs/DATA_POLICY.md) for report meanings, retention and backups. Flow rates are not delivered liquid volumes.
 
 This is a demonstration prototype. Use synthetic/de-identified data; green markers and photo measurements do not establish clinical suitability.
 
@@ -111,12 +123,12 @@ SiteCare を起動し、[http://127.0.0.1:8000](http://127.0.0.1:8000/) を開�
 
 回復を保存すると、その注意領域による制限は直ちに解除されます。反復所見による追加の再評価待ちはありません。ただし、別の注意領域・休止期間・距離・写真の条件は引き続き適用されます。条件を満たした部位は番号順の候補に直ちに戻ります。
 
-### 5. 校正を保持 — 管理者
+### 5. 校正を保持 — 看護師・管理者
 
-画面上部の **日時を変更** の右にある **校正を保持** を使用します。設定は全患者・全ユーザーで共通となり、再起動後も保存されます。
+看護師と管理者は画面上部の **校正を保持** を使用できます。初期設定はオンです。設定は全患者・全ユーザーで共通となり、再起動後も保存されます。
 
-- **オフ（初期設定）：** アプリ日時から撮影後24時間を超えた写真は、新しい確認・記録に使用できません。新しい写真を追加し、定規で校正して位置確認を保存します。取消されていない実施記録に使用済みの写真にも、新しい訪問写真が必要です。
-- **オン：** 最新の校正・位置確認済み写真を、24時間後や次回の実施記録にも使用できます。時間が経過したことだけを理由に再撮影・再校正する必要はありません。
+- **オフ：** アプリ日時から撮影後24時間を超えた写真は、新しい確認・記録に使用できません。新しい写真を追加し、定規で校正して位置確認を保存します。取消されていない実施記録に使用済みの写真にも、新しい訪問写真が必要です。
+- **オン（初期設定）：** 最新の校正・位置確認済み写真を、24時間後や次回の実施記録にも使用できます。時間が経過したことだけを理由に再撮影・再校正する必要はありません。
 - **再びオフ：** 元の撮影日時から計算する24時間の制限が直ちに適用されます。有効期限が24時間延長されるわけではありません。校正や過去の記録は削除されません。
 - **新しい写真を追加した場合：** オン・オフにかかわらず、その写真の校正と位置確認が必要です。別の画像に校正をコピーしたり、記録済み写真の固定を解除したりする機能ではありません。
 
@@ -126,7 +138,7 @@ SiteCare を起動し、[http://127.0.0.1:8000](http://127.0.0.1:8000/) を開�
 
 ### 6. 日時・予約・管理
 
-- **予約カレンダー：** 次回予定を確認し、**確認・変更**で予約を確定・変更します。通常の提案日時は、対象となる最後の穿刺から72時間後です。
+- **予約カレンダー：** 次回予定を確認し、**確認・変更**で予約を確定・変更します。患者画面の **予約** で日数（初期値3日）または曜日を選びます。方法は1つだけ有効で、次回1件のみを提案します。
 - **日時を変更（管理者）：** デモ日時または **システム日時を使用**を選び、**日時を適用**します。日時は全患者・全画面で共通となり、選択後も時計は進みます。業務日時は日本時間で表示します。
 - **プロフィール → 患者を削除…（管理者）：** 内容を確認し、患者IDを正確に入力して **完全に削除**します。アプリ内では元に戻せません。監査記録と既存のバックアップは残ります。
 - **設定・データ → 完全バックアップを取得（管理者）：** データベースと写真をまとめて保存します。患者の **CSV** は完全なバックアップではありません。
@@ -135,3 +147,14 @@ SiteCare を起動し、[http://127.0.0.1:8000](http://127.0.0.1:8000/) を開�
 **操作できない場合：** 最新の写真を使用し、位置確認と表示された制限を確認してください。「校正を保持」がオフの場合、新しい穿刺の記録にはアプリの日時から24時間以内の写真が必要です。記録に使用して固定された写真は、新しい写真を追加して位置合わせします。
 
 本アプリはデモ用の試作版です。架空・匿名化データを使用してください。緑色や写真の距離表示は、臨床上の適否を保証しません。
+
+
+### 7. 投与速度・領域寸法・患者記録
+
+- **投与速度：** 高用量・標準・低用量から1つを選び、速度（初期値0.15 mL/h）と増減幅（初期値0.01 mL/h）を設定します。増減には理由が必要です。青は増量、黄は減量、緑は変更なしです。穿刺を保存すると患者の次回初期値になります。
+- **注意領域：** 中心をクリックして幅・高さ（初期値各0.30 cm）を入力します。高さを個別編集するまでは幅に連動します。青い **マウスで描画** で範囲をドラッグして楕円を測定できます。痛み・圧痛は別々に選択できます。
+- **患者記録：** 患者を検索して開きます。月表示は各穿刺の速度、年・全期間表示は月・年の平均（mL/h）です。全14部位から選択し、表・所見件数・日時別写真も確認できます。投与済み液量ではありません。
+- **記録管理：** 管理者は理由付きで個別記録を編集・削除できます。削除済みを含めると元の記録も確認できます。修正前後の値は保持します。写真を個別削除できるのは未使用の場合です。新規・過去の記録は患者画面で追加します。
+- **設定・データ → 記録者アカウント → 看護師を削除：** 管理者がログインとセッションを削除できます。既存の記録者名付き記録は残ります。
+
+詳しい操作は [日英の機能ガイド](docs/PATIENT_RECORDS.md)、保存と削除は [データ管理方針](docs/DATA_POLICY.md) を参照してください。

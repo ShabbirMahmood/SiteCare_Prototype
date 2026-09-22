@@ -44,3 +44,33 @@
 .canvas-floating .float-tag{font-size:12px;line-height:1.4;letter-spacing:.2px}
 @media(max-width:650px){.canvas-floating .float-tag{font-size:11px}}
 @media(max-width:650px){.application-clock{padding:10px 14px}.application-clock>div{gap:5px 10px}}
+/* Patient preferences and longitudinal records. */
+.option-fieldset{border:1px solid #d5e0e3;border-radius:10px;padding:14px;margin:0 0 18px;min-width:0}
+.option-fieldset legend{font-weight:700;padding:0 6px;font-size:16px}
+.option-fieldset:disabled{opacity:.45}
+.option-fieldset input[type=radio]{appearance:none;width:20px;height:20px;min-height:20px;border:2px solid #81979e;border-radius:4px;position:relative;padding:0;flex-shrink:0}
+.option-fieldset input[type=radio]:checked{background:#176d68;border-color:#176d68}
+.option-fieldset input[type=radio]:checked:after{content:'✓';color:white;position:absolute;left:2px;top:-4px;font-weight:800;font-size:18px}
+.dosage-card{border:1px solid #d9e4e8;background:#f6f9fb;border-radius:12px;padding:18px;margin:12px 0 20px}
+.dose-controls{display:grid;grid-template-columns:minmax(140px,1.5fr) 44px minmax(100px,1fr) 44px;gap:10px;align-items:end;margin-bottom:18px}
+.dose-controls .field{margin:0}.dose-controls button{height:43px;padding:0;font-size:24px}
+.dose-status{display:inline-block;border-radius:6px;padding:5px 10px;font-size:16px;font-weight:800;white-space:nowrap}
+.dose-status.increased{color:#155eac;background:#e6f0ff}.dose-status.decreased{color:#825b00;background:#fff0b0}.dose-status.unchanged{color:#146849;background:#e0f3e9}
+.spot-controls{display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:center}
+.spot-preview{text-align:center;background:#fff6f7;border:1px solid #ebc9cf;border-radius:10px;margin-bottom:18px;padding:8px}
+.spot-preview svg{display:block;width:220px;height:90px;margin:auto}
+.record-filters{padding:20px}.record-filters .form-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+.record-tabs{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+.record-chart{display:block;max-width:none;font-family:inherit;background:white}
+.record-chart text{font-size:16px;fill:#29444e}.record-chart .point-value{font-size:17px;font-weight:750;fill:#153f64}.record-chart .chart-small{font-size:14px}
+.chart-scroll{max-width:100%;overflow-x:auto;padding:10px 10px 0;border-radius:10px}
+.record-actions{display:flex;gap:6px;flex-wrap:wrap;min-width:135px}
+.record-link{font-weight:700;color:#176d68;text-decoration:underline}
+.deleted-record{background:#f7f1f2;color:#71545a}
+.record-policy{max-width:1000px}.record-policy h3{margin:22px 0 9px}.record-policy p{line-height:1.8}
+.photo-history-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:20px;padding:20px}
+.photo-history-grid article{display:flex;flex-direction:column;gap:10px;border:1px solid #dbe4e7;border-radius:12px;padding:12px}
+.photo-history-grid img{width:100%;height:180px;object-fit:contain;background:#e8eef0;border-radius:6px}
+.snapshot-photo{max-width:900px;margin:auto;background:#182b30}.snapshot-photo svg{display:block;width:100%;max-height:720px}
+.canvas-toolbar{flex-wrap:wrap}
+@media(max-width:700px){.record-filters .form-grid{grid-template-columns:1fr}.spot-controls{grid-template-columns:1fr 1fr}.spot-controls button{grid-column:1/-1}.dose-controls{grid-template-columns:1fr 42px 1fr 42px;gap:6px}.dosage-card{padding:12px}.record-tabs .button{flex:1 1 45%}}

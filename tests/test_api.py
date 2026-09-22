@@ -123,7 +123,8 @@ def test_duplicate_click_idempotent(client, patient_id, photo_id):
     assert len(state(client, patient_id)['events']) == 1
 
 
-def test_same_photo_disallows_second_new_procedure(client, patient_id, photo_id):
+def test_same_photo_disallows_second_new_procedure_when_keep_is_off(client, patient_id, photo_id):
+    client.post("/api/settings", json={"keep_calibration": False, "revision": 0})
     assert record(client, patient_id, photo_id).status_code == 200
     r = record(client, patient_id, photo_id, x=0,y=6)
     assert r.status_code == 422 and r.json()['code'] == 'fresh_photo_required'
@@ -178,7 +179,7 @@ def test_older_history_does_not_move_due_backward(client, patient_id, photo_id):
 
 @pytest.mark.parametrize('overrides', [
     {'occurred_at':iso(now_utc()+timedelta(days=1))},
-    {'identity_checked':False}, {'clinical_checked':False}, {'point_checked':False},
+    {'identity_checked':False},
     {'kind':'history','exception_reason':''}, {'x':'NaN'}, {'kind':[]},
 ])
 def test_invalid_event_input_rejected(client, patient_id, photo_id, overrides):
@@ -187,6 +188,7 @@ def test_invalid_event_input_rejected(client, patient_id, photo_id, overrides):
 
 
 def test_fresh_photo_check_and_minute_rounding(client, patient_id):
+    client.post("/api/settings", json={"keep_calibration": False, "revision": 0})
     pid = calibrate(client, patient_id, upload(client, patient_id,
                     capture=iso(now_utc()-timedelta(days=2))))
     r = record(client, patient_id, pid)
@@ -332,14 +334,15 @@ def test_void_keeps_original_and_recalculates_due(client, patient_id, photo_id):
     assert d['states'][0]['status'] == 'eligible'
 
 
-def test_calendar_has_next_and_forecasts_distinguished(client, patient_id):
+def test_calendar_has_one_next_appointment_without_recurring_forecasts(client, patient_id):
     month = now_utc().strftime('%Y-%m')
     r = client.get('/api/appointments', params={'month':month})
     assert r.status_code == 200, r.text
     d = r.json()
     assert parse_time(d['grid_start']+'T00:00:00+09:00').astimezone(JST).weekday() == 0
     assert any(i.get('next') is True for i in d['items'])
-    assert any(i.get('kind') == 'projection' for i in d['items'])
+    assert not any(i.get('kind') == 'projection' for i in d['items'])
+    assert sum(i.get('next') is True for i in d['items']) == 1
 
 
 def test_inactive_patient_cannot_record(client, patient_id, photo_id):

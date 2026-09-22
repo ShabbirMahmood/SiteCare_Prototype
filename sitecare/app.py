@@ -34,13 +34,14 @@ from .rules import (JST, CHANGE_DAYS, PHOTO_VALID_HOURS, assess_point, body_to_i
                     event_applies, alert_active)
 from .security import password_hash, password_matches, token_hash
 from .settings import keep_calibration, read_settings
+from .records import dosage_settings, dosage_status, previous_dosage, appointment_settings, next_due, describe_audit
 from .storage import (audit, create_backup, decode_photo, initialize, one,
                       patient_records, rows, transaction, next_id, cleanup_deleted_photos)
 
 ROOT = Path(__file__).resolve().parent.parent
 MAX_UPLOAD = 16 * 1024 * 1024
 MAX_PIXELS = 32_000_000
-COMPLICATION_TYPES = {"redness", "hardness", "pain", "swelling", "bruising", "leakage", "other"}
+COMPLICATION_TYPES = {"redness", "hardness", "pain", "tenderness", "swelling", "bruising", "leakage", "other"}
 
 
 class AppError(Exception):
@@ -136,7 +137,7 @@ def appointment_due(db, p):
     last = one(db, "SELECT occurred_at FROM events WHERE patient_id=? AND occurred_at<=? "
                    "AND (voided_at IS NULL OR voided_at>?) ORDER BY occurred_at DESC,id DESC LIMIT 1",
                (p["id"], at, at))
-    return iso(parse_time(last["occurred_at"]) + timedelta(days=CHANGE_DAYS)) if last else p["start_at"]
+    return next_due(p, last["occurred_at"] if last else None)
 
 
 def effective_appointment(db, p):
@@ -180,6 +181,7 @@ def workspace(db, patient_id: int) -> dict:
             "photos": photos, "states": states, "candidates": candidates if p["active"] else [],
             "current_photo_id": current_photo["id"] if current_photo else None,
             "appointment": effective_appointment(db, p),
+            "dosage": dosage_settings(db, p), "appointment_settings": appointment_settings(p),
             "now": iso(now_utc()), "policy": policy_info(),
             "layout_locked": bool(current_photo and current_photo["locked"])}
 
@@ -340,7 +342,7 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
 
     @app.post("/api/settings")
     async def set_settings(request: Request):
-        user = require(request, True)
+        user = require(request)
         data = await payload(request)
         enabled = data.get("keep_calibration")
         if not isinstance(enabled, bool):
@@ -499,7 +501,7 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
             photos = rows(db, "SELECT filename FROM photos WHERE patient_id=?", (patient_id,))
             counts = {}
             # Child records must be removed before their photo/patient parents.
-            for table in ("events", "complications", "reviews", "appointments", "sites", "photos"):
+            for table in ("record_revisions", "events", "complications", "reviews", "appointments", "sites", "photos"):
                 counts[table] = db.execute(f"SELECT COUNT(*) FROM {table} WHERE patient_id=?", (patient_id,)).fetchone()[0]
                 db.execute(f"DELETE FROM {table} WHERE patient_id=?", (patient_id,))
             db.executemany("INSERT OR IGNORE INTO pending_photo_deletions(filename) VALUES(?)",
@@ -699,8 +701,8 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
         if not isinstance(kind, str) or kind not in {"procedure", "history"}:
             raise AppError("Choose a new procedure or a historical record.")
         point = {"x": number(data.get("x"), "X", -40, 40), "y": number(data.get("y"), "Y", -40, 40)}
-        if any(data.get(field) is not True for field in ("identity_checked", "point_checked", "clinical_checked")):
-            raise AppError("Confirm patient identity, the exact puncture point, and bedside assessment/measurement before saving.")
+        if data.get("identity_checked") is not True:
+            raise AppError("Confirm patient identity and the correct record before saving.")
         reason = text(data.get("exception_reason", ""), "Historical record explanation", 2000)
         if kind == "history" and len(reason) < 8:
             raise AppError("A historical record needs an explanation of at least 8 characters.")
@@ -711,6 +713,16 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
                     raise AppError("Request key is already in use.", 409)
                 return {"id": existing["id"], "duplicate": True}
             p = check_version(db, patient_id, data)
+            preset = dosage_settings(db, p)
+            dose_rate = number(data.get("dosage_rate", preset["rate"]), "Drug dosage (mL/h)", 0, 1000)
+            dose_category = data.get("dosage_category", preset["category"])
+            if dose_category not in ("higher", "standard", "lower"):
+                raise AppError("Choose Higher, Standard or Lower dosage category.")
+            prior = previous_dosage(db, patient_id, parse_time(occurred))
+            prior_rate = prior["dosage_rate"] if prior else 0.15
+            dose_status = dosage_status(dose_rate, prior_rate)
+            dose_reason = text(data.get("dosage_reason", preset["reason"]), "Dosage change reason", 2000,
+                               required=dose_status != "unchanged")
             photo_id = integer(data.get("photo_id"), "Photo")
             raw_photo = one(db, "SELECT * FROM photos WHERE id=? AND patient_id=?", (photo_id, patient_id))
             photo = decode_photo(raw_photo)
@@ -747,12 +759,18 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
                              (next_id(db, "events"), patient_id, photo_id, n, point["x"], point["y"], occurred, iso(now_utc()), user["display_name"],
                               text(data.get("note", ""), "Note"), kind, reason, json.dumps(assessed["reasons"]),
                               raw_photo["alignment_json"], key)).lastrowid
+            db.execute("UPDATE events SET dosage_rate=?,dosage_category=?,dosage_previous_rate=?,dosage_status=?,dosage_reason=? WHERE id=?",
+                       (dose_rate, dose_category, prior_rate, dose_status, dose_reason, eid))
+            if previous_dosage(db, patient_id)["id"] == eid:
+                db.execute("UPDATE patients SET dosage_pending=0,dosage_reason='' WHERE id=?", (patient_id,))
             db.execute("UPDATE photos SET locked=1 WHERE id=?", (photo_id,))
             sync_appointment(db, patient_id)
             bump(db, patient_id)
             audit(db, user["display_name"], "puncture.recorded", str(eid),
                   {"site_number": n, "point": point, "occurred_at": occurred, "kind": kind,
-                   "warnings": assessed["reasons"], "exception_reason": reason}, patient_id)
+                   "warnings": assessed["reasons"], "exception_reason": reason,
+                   "dosage_rate": dose_rate, "dosage_category": dose_category, "dosage_status": dose_status,
+                   "dosage_reason": dose_reason}, patient_id)
         return {"id": eid, "site_number": n}
 
     @app.post("/api/events/{event_id}/void")
@@ -771,6 +789,10 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
                 raise AppError("The application date is earlier than this record. Change the date before voiding it.", 422)
             db.execute("UPDATE events SET voided_at=?,voided_by=?,void_reason=? WHERE id=?",
                        (iso(now_utc()), user["display_name"], reason, event_id))
+            after = one(db, "SELECT * FROM events WHERE id=?", (event_id,))
+            db.execute("INSERT INTO record_revisions(patient_id,record_type,record_id,changed_at,actor,reason,before_json,after_json) "
+                       "VALUES(?,?,?,?,?,?,?,?)", (event["patient_id"], "puncture", event_id, iso(now_utc()),
+                       user["display_name"], reason, json.dumps(event), json.dumps(after)))
             sync_appointment(db, event["patient_id"])
             bump(db, event["patient_id"])
             audit(db, user["display_name"], "puncture.voided", str(event_id), {"reason": reason}, event["patient_id"])
@@ -785,7 +807,13 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
             raise AppError("Select at least one supported complication type.")
         types = sorted(set(types))
         point = {"x": number(data.get("x"), "X", -40, 40), "y": number(data.get("y"), "Y", -40, 40)}
-        radius = number(data.get("radius"), "Alert radius (cm)", 0.3, 15)
+        if "width_cm" in data or "height_cm" in data:
+            width = number(data.get("width_cm"), "Width (cm)", 0.01, 30)
+            height = number(data.get("height_cm"), "Height (cm)", 0.01, 30)
+            radius = max(width, height) / 2
+        else:
+            radius = number(data.get("radius"), "Alert radius (cm)", 0.3, 15)
+            width = height = radius * 2
         severity = data.get("severity", "mild")
         if not isinstance(severity, str) or severity not in {"mild", "moderate", "severe"}:
             raise AppError("Choose a supported severity.")
@@ -808,10 +836,11 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
                              "recorded_at,actor,note,alignment_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                              (next_id(db, "complications"), patient_id, photo_id, n, point["x"], point["y"], radius, json.dumps(types), severity,
                               observed, iso(now_utc()), user["display_name"], text(data.get("note", ""), "Note"), raw["alignment_json"])).lastrowid
+            db.execute("UPDATE complications SET width_cm=?,height_cm=? WHERE id=?", (width, height, aid))
             db.execute("UPDATE photos SET locked=1 WHERE id=?", (photo_id,))
             bump(db, patient_id)
             audit(db, user["display_name"], "skin.alert_created", str(aid),
-                  {"types": types, "point": point, "radius": radius, "severity": severity}, patient_id)
+                  {"types": types, "point": point, "width_cm": width, "height_cm": height, "severity": severity}, patient_id)
         return {"id": aid}
 
     @app.post("/api/alerts/{alert_id}/resolve")
@@ -828,6 +857,8 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
             check_version(db, alert["patient_id"], data)
             if alert["resolved_at"]:
                 raise AppError("This alert is already resolved.", 409)
+            if alert["voided_at"]:
+                raise AppError("This alert was deleted from active records.", 409)
             if parse_time(alert["observed_at"]) > now_utc():
                 raise AppError("The application date is earlier than this observation. Change the date before resolving it.", 422)
             db.execute("UPDATE complications SET resolved_at=?,resolved_by=?,resolution_note=? WHERE id=?",
@@ -899,13 +930,6 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
                 base = {"patient_id": p["id"], "code": p["code"], "alias": p["alias"], "due_at": appt["due_at"]}
                 # The next unresolved appointment is always retained, even when overdue.
                 items.append({**base, "at": iso(dt), "kind": appt["status"], "overdue": p["overdue"], "next": True})
-                if dt < end:
-                    step = max(1, math.ceil((begin - dt).total_seconds() / (CHANGE_DAYS * 86400)))
-                    while dt + timedelta(days=CHANGE_DAYS * step) < end:
-                        future = dt + timedelta(days=CHANGE_DAYS * step)
-                        if future >= begin:
-                            items.append({**base, "at": iso(future), "kind": "projection", "overdue": False, "next": False})
-                        step += 1
                 for e in rows(db, "SELECT id,occurred_at,site_number FROM events WHERE patient_id=? "
                                   "AND (voided_at IS NULL OR voided_at>?) AND occurred_at<=? "
                                   "AND occurred_at>=? AND occurred_at<?",
@@ -925,7 +949,9 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
         buf = io.StringIO(newline="")
         writer = csv.writer(buf)
         writer.writerow(["patient_id", "record_type", "site_number", "occurred_JST", "x_cm", "y_cm", "radius_cm",
-                         "types", "actor", "note", "resolved_or_voided_JST", "historical_warning", "correction_note"])
+                         "types", "actor", "note", "resolved_or_voided_JST", "historical_warning", "correction_note",
+                         "width_cm", "height_cm", "dosage_category", "dosage_rate_ml_per_hour", "previous_rate_ml_per_hour",
+                         "dosage_change", "dosage_reason", "photo_id", "record_id", "deleted_JST", "deletion_reason"])
         def safe(v):
             s = "" if v is None else str(v)
             return "'" + s if s.lstrip().startswith(("=", "+", "-", "@")) or s.startswith(("\t", "\r", "\n")) else s
@@ -934,11 +960,14 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
         for e in events:
             values = [p["code"], e["kind"], e["site_number"], local(e["occurred_at"]), e["x"], e["y"], "", "",
                       e["actor"], e["note"], local(e["voided_at"]), json.dumps(e["warnings"], ensure_ascii=False),
-                      e["void_reason"] or e["exception_reason"]]
+                      e["void_reason"] or e["exception_reason"], "", "", e["dosage_category"], e["dosage_rate"],
+                      e["dosage_previous_rate"], e["dosage_status"], e["dosage_reason"], e["photo_id"], e["id"],
+                      local(e["voided_at"]), e["void_reason"]]
             writer.writerow([safe(v) for v in values])
         for a in alerts:
             values = [p["code"], "skin_alert", a["site_number"], local(a["observed_at"]), a["x"], a["y"], a["radius"],
-                      ", ".join(a["types"]), a["actor"], a["note"], local(a["resolved_at"]), "", a["resolution_note"]]
+                      ", ".join(a["types"]), a["actor"], a["note"], local(a["resolved_at"]), "", a["resolution_note"],
+                      a["width_cm"], a["height_cm"], "", "", "", "", "", a["photo_id"], a["id"], local(a["voided_at"]), a["void_reason"]]
             writer.writerow([safe(v) for v in values])
         return Response(("\ufeff" + buf.getvalue()).encode("utf-8"), media_type="text/csv; charset=utf-8",
                         headers={"Content-Disposition": f'attachment; filename="sitecare-patient-{patient_id}.csv"'})
@@ -947,10 +976,12 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
     def get_audit(request: Request, patient_id: int | None = None):
         require(request, True)
         with transaction(data_dir) as db:
-            query = "SELECT * FROM audit" + (" WHERE patient_id=?" if patient_id is not None else "") + " ORDER BY id DESC LIMIT 200"
+            query = "SELECT audit.*,EXISTS(SELECT 1 FROM patients WHERE patients.id=audit.patient_id) AS patient_exists FROM audit" + (" WHERE patient_id=?" if patient_id is not None else "") + " ORDER BY id DESC LIMIT 200"
             data = rows(db, query, (patient_id,) if patient_id is not None else ())
         for row in data:
             row["detail"] = json.loads(row.pop("detail_json"))
+            row["patient_exists"] = bool(row["patient_exists"])
+            row.update(describe_audit(row))
         return {"items": data, "limit": 200}
 
     @app.get("/api/users")
@@ -1005,5 +1036,7 @@ def create_app(data_dir: Path | None = None, *, testing: bool = False) -> FastAP
     def index():
         return FileResponse(ROOT / "templates" / "index.html", media_type="text/html")
 
+    from .record_routes import register_record_routes
+    register_record_routes(app, data_dir)
     app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
     return app
